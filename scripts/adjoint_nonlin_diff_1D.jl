@@ -89,7 +89,7 @@ end
     println("done")
     # adjoint solve
     println("adjoint solve...")
-    @. ∂J_∂H = (H-H_obs)
+    @. ∂J_∂H = H - H_obs
     # Enzyme.autodiff(cost,Duplicated(H,∂J_∂H),Const(H_obs))
     for iter = 1:niter
         # discretize-then-optimise

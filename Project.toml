@@ -1,3 +1,4 @@
 [deps]
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 ParallelStencil = "94395366-693c-11ea-3b26-d9b7aac5d958"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"

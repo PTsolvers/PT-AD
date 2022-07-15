@@ -4,7 +4,9 @@ using CUDA
 @inbounds function residual!(R,H,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(R)-1
-        R[ix] = (H[ix-1]^(npow[ix]+1.0) - 2.0*H[ix]^(npow[ix]+1.0) + H[ix+1]^(npow[ix]+1.0))/dx/dx/(npow[ix]+1.0)
+        # R[ix] = (H[ix-1]^(npow[ix]+1.0) - 2.0*H[ix]^(npow[ix]+1.0) + H[ix+1]^(npow[ix]+1.0))/dx/dx/(npow[ix]+1.0) # fails
+        R[ix] = (H[ix-1]^2 - 2.0*H[ix]^2 + H[ix+1]^2)/dx/dx/(npow[ix]+1.0) # works
+        # R[ix] = (H[ix-1]^npow[ix] - 2.0*H[ix]^2 + H[ix+1]^2)/dx/dx/(npow[ix]+1.0) # fails
     end
     return
 end
@@ -16,6 +18,11 @@ end
 #     end
 #     return 0.5*J
 # end
+
+function grad_residual!(R,Jn,H,JVP,npow,dx)
+    Enzyme.autodiff_deferred(residual!,Const,Duplicated(R,Jn),Duplicated(H,JVP),Const(npow),Const(dx))
+    return
+end
 
 @inbounds function adjoint_residual!(R,Ψ,H,H_obs,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
@@ -94,14 +101,14 @@ end
         end
     end
     println("done")
-    # error("stop")
     # adjoint solve
     println("adjoint solve...")
     @. ∂J_∂H = H - H_obs
     for iter = 1:niter
         # discretize-then-optimise
         JVP .= 0.0; Jn .= Ψ
-        Enzyme.autodiff(residual!,Const,Duplicated(R,Jn),Duplicated(H,JVP),Const(npow),Const(dx))
+
+        @cuda blocks=blocks threads=threads grad_residual!(R,Jn,H,JVP,npow,dx); synchronize()
         
         error("stop")
         

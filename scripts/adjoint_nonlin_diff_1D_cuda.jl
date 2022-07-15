@@ -11,6 +11,16 @@ using CUDA
     return
 end
 
+function residual_grad!(R,Jn,H,JVP,npow,dx)
+    Enzyme.autodiff_deferred(residual!,Const,Duplicated(R,Jn),Duplicated(H,JVP),Const(npow),Const(dx))
+    return
+end
+
+function cost_grad!(R,JVP,H,npow,Jn,dx)
+    Enzyme.autodiff_deferred(residual!,Const,Duplicated(R,JVP),Const(H),Duplicated(npow,Jn),Const(dx))
+    return
+end
+
 # function cost(H,H_obs)
 #     J = 0.0
 #     @inbounds @simd for ix ∈ eachindex(H)
@@ -18,11 +28,6 @@ end
 #     end
 #     return 0.5*J
 # end
-
-function grad_residual!(R,Jn,H,JVP,npow,dx)
-    Enzyme.autodiff_deferred(residual!,Const,Duplicated(R,Jn),Duplicated(H,JVP),Const(npow),Const(dx))
-    return
-end
 
 @inbounds function adjoint_residual!(R,Ψ,H,H_obs,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
@@ -38,11 +43,11 @@ end
 
 @inbounds function cost_gradient!(Jn,Ψ,H,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
-    if ix>=2 && ix<=length(R)-1
+    if ix>=2 && ix<=length(H)-1
         Jn[ix] = H[ix]^npow[ix]*log(H[ix])*0.5*(H[ix+1]-H[ix-1])/dx*0.5*(Ψ[ix+1]-Ψ[ix-1])/dx
     end
     if ix==1         Jn[ix] = Jn[ix+1] end
-    if ix==length(R) Jn[ix] = Jn[ix-1] end
+    if ix==length(H) Jn[ix] = Jn[ix-1] end
     return
 end
 
@@ -107,15 +112,11 @@ end
     for iter = 1:niter
         # discretize-then-optimise
         JVP .= 0.0; Jn .= Ψ
-
-        @cuda blocks=blocks threads=threads grad_residual!(R,Jn,H,JVP,npow,dx); synchronize()
-        
-        error("stop")
-        
+        @cuda blocks=blocks threads=threads residual_grad!(R,Jn,H,JVP,npow,dx); synchronize()
         @. dΨdt = dΨdt*(1.0-dmp_adj2/nx) + dt*(JVP + ∂J_∂H)
         @. Ψ[2:end-1] += dt*dΨdt[2:end-1]
         # optimise-then-discretize
-        adjoint_residual!(dR_an,Ψ_an,H,H_obs,npow,dx)
+        @cuda blocks=blocks threads=threads adjoint_residual!(dR_an,Ψ_an,H,H_obs,npow,dx); synchronize()
         @. R_an  = R_an*(1.0-dmp_adj/nx) + dt*dR_an
         @. Ψ_an += dt*R_an
         # check convergence
@@ -129,11 +130,11 @@ end
     println("done")
     # dJdn
     JVP .= Ψ; Jn .= 0.0
-    Enzyme.autodiff(residual!,Const,Duplicated(R,JVP),Const(H),Duplicated(npow,Jn),Const(dx))
-    cost_gradient!(Jn_an,Ψ,H_obs,npow_s,dx)
-    p1 = plot(xc,[H,H_obs] ; title="H" , label=["H" "H_obs"])
-    p2 = plot(xc,[Jn,Jn_an]; title="Jn", label=["dto" "otd"])
-    p3 = plot(xc,[Ψ,Ψ_an]  ; title="Ψ" , label=["dto" "otd"])
+    @cuda blocks=blocks threads=threads cost_grad!(R,JVP,H,npow,Jn,dx); synchronize()
+    @cuda blocks=blocks threads=threads cost_gradient!(Jn_an,Ψ,H_obs,npow_s,dx); synchronize()
+    p1 = plot(xc,Array([H,H_obs]) ; title="H" , label=["H" "H_obs"])
+    p2 = plot(xc,Array([Jn,Jn_an]); title="Jn", label=["dto" "otd"])
+    p3 = plot(xc,Array([Ψ,Ψ_an])  ; title="Ψ" , label=["dto" "otd"])
     display(plot(p1,p2,p3))
     return
 end

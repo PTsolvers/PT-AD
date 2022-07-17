@@ -4,8 +4,8 @@ using CUDA
 @inbounds function residual!(R,H,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(R)-1
-        # R[ix] = (H[ix-1]^(npow[ix]+1.0) - 2.0*H[ix]^(npow[ix]+1.0) + H[ix+1]^(npow[ix]+1.0))/dx/dx/(npow[ix]+1.0) # fails
-        R[ix] = (H[ix-1]^2 - 2.0*H[ix]^2 + H[ix+1]^2)/dx/dx/(npow[ix]+1.0) # works
+        R[ix] = (H[ix-1]^(npow[ix]+1.0) - 2.0*H[ix]^(npow[ix]+1.0) + H[ix+1]^(npow[ix]+1.0))/dx/dx/(npow[ix]+1.0) # fails
+        # R[ix] = (H[ix-1]^2 - 2.0*H[ix]^2 + H[ix+1]^2)/dx/dx/(npow[ix]+1.0) # works
         # R[ix] = (H[ix-1]^npow[ix] - 2.0*H[ix]^2 + H[ix+1]^2)/dx/dx/(npow[ix]+1.0) # fails
     end
     return
@@ -73,7 +73,7 @@ end
     H        = CuArray(collect(1.0 .- 0.5.*xc./lx))
     H_obs    = copy(H)
     npow_s   = CUDA.fill(npow0  ,nx)
-    npow     = CUDA.fill(npow0-2,nx)
+    npow     = CUDA.fill(npow0-2.0,nx)
     R        = CUDA.zeros(Float64,nx)
     R_an     = CUDA.zeros(Float64,nx)
     R_obs    = CUDA.zeros(Float64,nx)

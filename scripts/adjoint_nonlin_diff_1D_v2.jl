@@ -1,4 +1,4 @@
-using Enzyme,Plots,Printf,LoopVectorization
+using Enzyme,Plots,Printf
 
 function residual!(R,H,npow,dx)
     @inbounds @simd for ix = 2:length(R)-1
@@ -7,10 +7,10 @@ function residual!(R,H,npow,dx)
     return
 end
 
-function cost(H,H_obs,npow,αreg,dx)
+function cost(H,H_obs)
     J = 0.0
     @inbounds @simd for ix ∈ eachindex(H)
-        J += (H[ix]-H_obs[ix])^2 + αreg*(npow[ix+1]-npow[ix-1])^2/dx
+        J += (H[ix]-H_obs[ix])^2
     end
     return 0.5*J
 end
@@ -92,9 +92,9 @@ function solve!(problem::AdjointProblem)
     return
 end
 
-function cost_gradient!(Jn,αreg,problem::AdjointProblem)
+function cost_gradient!(Jn,problem::AdjointProblem)
     (;Ψ,tmp1,tmp2,H,npow,dx) = problem
-    tmp1 .= .-Ψ; Jn .= 0.0; Jn[2:end-1] .= -αreg.*(npow[1:end-2] - 2.0*npow[2:end-1] + npow[3:end])/dx;
+    tmp1 .= .-Ψ; Jn .= 0.0
     Enzyme.autodiff(residual!,Duplicated(tmp2,tmp1),Const(H),Duplicated(npow,Jn),Const(dx))
     Jn[1] = Jn[2]; Jn[end] = Jn[end-1]
     return
@@ -119,7 +119,6 @@ end
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
-    αreg         = 0.0
     # init
     H            = collect(1.0 .- 0.5.*xc./lx)
     H_obs        = copy(H)
@@ -144,13 +143,13 @@ end
         # adjoint solve
         solve!(adj_problem)
         # compute cost function gradient
-        cost_gradient!(Jn,αreg,adj_problem)
+        cost_gradient!(Jn,adj_problem)
         # line search
         for bt_iter = 1:bt_niter
             @. npow -= γ*Jn
             fwd_problem.H .= H_ini
             solve!(fwd_problem)
-            J_new = cost(H,H_obs,npow,αreg)
+            J_new = cost(H,H_obs)
             if J_new < J_old
                 γ *= 1.2
                 J_old = J_new

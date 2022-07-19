@@ -68,6 +68,7 @@ end
     @all(RH)   = -_dx*@d_xa(qHx) -_dy*@d_ya(qHy) + @inn(A)
     @all(dHdτ) = @all(dHdτ)*damp + @all(RH)
     @all(dτ)   = 0.5*min(1.0, cfl/(ε+@av(D)))
+    # @all(dτ)   = min(1.0, cfl/(ε+@av(D)))
     return
 end
 

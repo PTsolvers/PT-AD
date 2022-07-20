@@ -106,6 +106,7 @@ end
 function cost_gradient!(Jn,problem::AdjointProblem)
     (;Ψ,dτ,tmp1,tmp2,H,B,Ela,β,dx,npow,a1,a2,c,ε) = problem
     tmp1 .= .-Ψ; Jn .= 0.0
+    cfl = dx^2/2.1
     Enzyme.autodiff(residual!,Duplicated(tmp1,tmp2),Const(H),Const(B),Duplicated(Ela,Jn),Const(β),Const(dτ),Const(c),Const(npow),Const(a1),Const(a2),Const(cfl),Const(ε),Const(dx))
     Jn[1] = Jn[2]; Jn[end] = Jn[end-1]
     return
@@ -159,24 +160,21 @@ end
     solve!(synt_problem)
     solve!(fwd_problem)
     println("  gradient descent")
-
-
-    solve!(adj_problem)
-
-    S  = B .+ H_obs; S[H_obs.==0] .= NaN
-    p1 = plot(xc,[B,S] , label=["Bed" "Surface"], linewidth=3)
-    p2 = plot(xc, H_obs, label="Ice thick", linewidth=3)
-    # p3 = plot(xc,β , label="β", linewidth=3)
-    p3 = plot(xc,Ela_synt, label="ELA", linewidth=3)
-    display(plot(p1,p2,p3, layout=(3, 1)))
-
-    # γ = γ0
-    # J_old = cost(H,H_obs)
-    # J_evo = Float64[]; iter_evo = Int[]
+    γ = γ0
+    J_old = cost(H,H_obs)
+    J_evo = Float64[]; iter_evo = Int[]
     # for gd_iter = 1:gd_niter
-    #     npow_init .= npow
-    #     # adjoint solve
-    #     solve!(adj_problem)
+        Ela_ini .= Ela
+        # adjoint solve
+        solve!(adj_problem)
+    
+        S  = B .+ H_obs; S[H_obs.==0] .= NaN
+        p1 = plot(xc,[B,S] , label=["Bed" "Surface"], linewidth=3)
+        p2 = plot(xc, H_obs, label="Ice thick", linewidth=3)
+        # p3 = plot(xc,β , label="β", linewidth=3)
+        p3 = plot(xc,Ela_synt, label="ELA", linewidth=3)
+        display(plot(p1,p2,p3, layout=(3, 1)))
+    
     #     # compute cost function gradient
     #     cost_gradient!(Jn,adj_problem)
     #     # line search

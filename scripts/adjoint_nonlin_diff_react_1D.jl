@@ -117,7 +117,7 @@ end
     ncheck       = 1nx
     ϵtol         = 1e-5
     gd_ϵtol      = 1e-3
-    dmp          = 0.7
+    dmp          = 0.6
     dmp_adj      = 3/2
     gd_niter     = 100
     bt_niter     = 10

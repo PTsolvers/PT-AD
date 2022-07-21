@@ -4,8 +4,8 @@ function residual!(R,H,B,β,npow,dx)
     @inbounds @simd for ix = 2:length(R)-1
         ∇S_l  = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r  = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
-        D_l   = ((∇S_l>0.0)*H[ix  ]^npow + (∇S_l<0.0)*H[ix-1]^npow)*abs(∇S_l)^2
-        D_r   = ((∇S_r>0.0)*H[ix+1]^npow + (∇S_r<0.0)*H[ix  ]^npow)*abs(∇S_r)^2
+        D_l   = ((∇S_l>0.0)*(H[ix  ]^(npow+2) + H[ix  ]^npow) + (∇S_l<0.0)*(H[ix-1]^(npow+2) + H[ix-1]^npow))*abs(∇S_l)^2
+        D_r   = ((∇S_r>0.0)*(H[ix+1]^(npow+2) + H[ix+1]^npow) + (∇S_r<0.0)*(H[ix  ]^(npow+2) + H[ix  ]^npow))*abs(∇S_r)^2
         R[ix] = (D_r*∇S_r - D_l*∇S_l)/dx + min(β[ix]*(B[ix] + H[ix] - 0.2),0.01)
     end
     return
@@ -34,7 +34,7 @@ end
 @views function solve!(problem::ForwardProblem)
     (;H,B,R,dR,β,npow,niter,ncheck,ϵtol,dx,dmp) = problem
     nx  = length(H)
-    dt  = dx/40
+    dt  = dx/50
     R  .= 0; dR .= 0
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
@@ -112,7 +112,7 @@ end
     npow         = 3
     β0           = 0.1
     # numerics
-    nx           = 256
+    nx           = 128
     niter        = 1000nx
     ncheck       = 1nx
     ϵtol         = 1e-5
@@ -121,7 +121,7 @@ end
     dmp_adj      = 3/2
     gd_niter     = 100
     bt_niter     = 10
-    γ0           = 1.0e-5
+    γ0           = 1.0e-4
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
@@ -157,6 +157,9 @@ end
         # line search
         for bt_iter = 1:bt_niter
             @. β -= γ*Jn
+            for ism = 1:1
+                β[2:end-1] .+= 1/8 .* (β[1:end-2] - 2.0.*β[2:end-1] .+ β[3:end])
+            end
             fwd_problem.H .= H_ini
             solve!(fwd_problem)
             J_new = cost(H,H_obs)

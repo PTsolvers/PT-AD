@@ -121,7 +121,7 @@ end
     dmp_adj      = 3/2
     gd_niter     = 100
     bt_niter     = 10
-    γ0           = 0.001
+    γ0           = 1.0e-5
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
@@ -133,7 +133,7 @@ end
     H_ini        = copy(H)
     B            = 1.0 .* exp.(.-(xc./lx .-0.5).^2 ./ 0.25) .+ 2.5 .* exp.(.-(xc./lx .-0.5).^2 ./ 0.025)
     β_synt       = β0 .* (1.0 .- 2.0 .* 10.0 .* abs.((2.0 .* xc/lx .- 1.0)./10.0))
-    β_ini        = 0.25 .* β_synt
+    β_ini        = 0.1 .* β_synt
     β            = copy(β_ini)
     Jn           = zeros(nx) # cost function gradient
     fwd_problem  = ForwardProblem(H,B,β,npow,niter,ncheck,ϵtol,dx,dmp)

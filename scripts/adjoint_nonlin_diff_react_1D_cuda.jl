@@ -18,8 +18,8 @@ end
     if ix>=2 && ix<=length(R)-1
         ∇S_l  = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r  = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
-        D_l   = ((∇S_l>0.0) ? (mypow(H[ix  ],npow+2) + mypow(H[ix  ],npow)) : (mypow(H[ix-1],npow+2) + mypow(H[ix-1],npow)))*mypow(∇S_l,2)
-        D_r   = ((∇S_r>0.0) ? (mypow(H[ix+1],npow+2) + mypow(H[ix+1],npow)) : (mypow(H[ix  ],npow+2) + mypow(H[ix  ],npow)))*mypow(∇S_r,2)
+        D_l   = ((∇S_l>0.0) ? (mypow(H[ix  ],npow+2)*1e-4 + mypow(H[ix  ],npow)) : (mypow(H[ix-1],npow+2) + mypow(H[ix-1],npow)))*mypow(∇S_l,2)
+        D_r   = ((∇S_r>0.0) ? (mypow(H[ix+1],npow+2)*1e-4 + mypow(H[ix+1],npow)) : (mypow(H[ix  ],npow+2) + mypow(H[ix  ],npow)))*mypow(∇S_r,2)
         R[ix] = (D_r*∇S_r - D_l*∇S_l)/dx + min(β[ix]*(B[ix] + H[ix] - ELA[ix]),0.01)
     end
     return
@@ -30,40 +30,42 @@ end
     if ix>=2 && ix<=length(H)-1
         ∇S_l   = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r   = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
-        D_l    = ((∇S_l>0.0) ? (H[ix  ]^(npow+2) + H[ix  ]^npow) : (∇S_l<0.0)*(H[ix-1]^(npow+2) + H[ix-1]^npow))*∇S_l^2
-        D_r    = ((∇S_r>0.0) ? (H[ix+1]^(npow+2) + H[ix+1]^npow) : (∇S_r<0.0)*(H[ix  ]^(npow+2) + H[ix  ]^npow))*∇S_r^2
-        dτ[ix] = min(0.05, 0.05/(1e-5 + sqrt(0.5*(D_l + D_r))))
+        D_l    = ((∇S_l>0.0) ? (H[ix  ]^(npow+2)*1e-4 + H[ix  ]^npow) : (∇S_l<0.0)*(H[ix-1]^(npow+2) + H[ix-1]^npow))*∇S_l^2
+        D_r    = ((∇S_r>0.0) ? (H[ix+1]^(npow+2)*1e-4 + H[ix+1]^npow) : (∇S_r<0.0)*(H[ix  ]^(npow+2) + H[ix  ]^npow))*∇S_r^2
+        dτ[ix] = 0.5*min(0.05, 0.05*dx/(1e-5 + sqrt(0.5*(D_l + D_r))))
     end
     return
 end
 
 mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T}}
     H::A; B::A; ELA::A; R::A; dR::A; β::A; npow::Int
-    niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
+    Err::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
     dx::T; dmp::T
 end
 
 function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
-    R  = similar(H)
-    dR = similar(H)
-    return ForwardProblem(H,B,ELA,R,dR,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
+    R   = similar(H)
+    dR  = similar(H)
+    Err = similar(H)
+    return ForwardProblem(H,B,ELA,R,dR,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
 end
 
 @views function solve!(problem::ForwardProblem)
-    (;H,B,ELA,R,dR,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
+    (;H,B,ELA,R,dR,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
     nx  = length(H)
     dτ  = CUDA.zeros(Float64,nx)
-    R  .= 0; dR .= 0
+    R  .= 0; dR .= 0; Err .=0
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
+        Err .= H
         @cuda blocks=blocks threads=threads residual!(dR,H,B,ELA,β,npow,dx); synchronize()
         @cuda blocks=blocks threads=threads timestep!(dτ,H,B,npow,dx); synchronize()
         @. R = R*(1.0-dmp/nx) + dτ*dR
-        @. R[H == 0.0 && dR < 0.0] = 0.0
+        # @. R[H == 0.0 && dR < 0.0] = 0.0
         @. H = max(0.0, H + dτ*R)
         if iter % ncheck == 0
-            merr = maximum(abs.(R))
-            # display(plot(H))
+            @. Err -= H
+            merr = maximum(abs.(Err))
             isfinite(merr) || error("forward solve failed") 
         end
         iter += 1
@@ -77,7 +79,7 @@ end
 
 mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
     Ψ::A; R::A; dR; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; npow::Int
-    niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
+    Err::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
     dx::T; dmp::T
 end
 
@@ -88,7 +90,8 @@ function AdjointProblem(H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,
     tmp1  = similar(H)
     tmp2  = similar(H)
     ∂J_∂H = similar(H)
-    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
+    Err   = similar(H)
+    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
 end
 
 function residual_grad!(tmp1,tmp2,H,dR,B,ELA,β,npow,dx)
@@ -97,23 +100,24 @@ function residual_grad!(tmp1,tmp2,H,dR,B,ELA,β,npow,dx)
 end
 
 @views function solve!(problem::AdjointProblem)
-    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
+    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
     nx = length(Ψ)
     dt = dx/5
-    Ψ .= 0; R .= 0; dR .= 0
+    Ψ .= 0; R .= 0; dR .= 0; Err .= 0
     @. ∂J_∂H = H - H_obs
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
         dR .= .-∂J_∂H; tmp2 .= Ψ
+        Err .= Ψ
         @cuda blocks=blocks threads=threads residual_grad!(tmp1,tmp2,H,dR,B,ELA,β,npow,dx); synchronize()
         @. R  = R*(1.0-dmp/nx) + dt*dR
         @. Ψ += dt*R
-        R[H .== 0.0] .= 0.0
+        # R[H .== 0.0] .= 0.0
         Ψ[H .== 0.0] .= 0.0
         Ψ[1:1] .= 0; Ψ[end:end] .= 0
         if iter % ncheck == 0
-            merr = maximum(abs.(R[2:end-1]))
-            # display(plot(Ψ))
+            @. Err -= Ψ
+            merr = maximum(abs.(Err))
             isfinite(merr) || error("adjoint solve failed") 
         end
         iter += 1
@@ -148,7 +152,7 @@ end
 
 function cost(J2,H,H_obs,threads,blocks)
     @cuda blocks=blocks threads=threads cost!(J2,H,H_obs); synchronize()
-    return maximum(J2)
+    return sum(J2)
 end
 
 @inbounds function smooth!(A)
@@ -170,9 +174,9 @@ end
     # physics
     lx           = 100.0
     npow         = 3
-    β0           = 0.25
+    β0           = 0.5
     # numerics
-    nx           = 64*1
+    nx           = 64*8
     threads      = nx
     blocks       = cld(nx,threads)
     niter        = 1000nx
@@ -183,20 +187,20 @@ end
     dmp_adj      = 1.5
     gd_niter     = 100
     bt_niter     = 10
-    γ0           = 1.0e-2
+    γ0           = 2.0e-1
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
     # init
-    H            = CUDA.zeros(Float64,nx)
-    S            = CUDA.zeros(Float64,nx)
+    H            = 5.0 .* CUDA.ones(Float64,nx)
+    S            = CUDA.zeros(Float64,nx) # visu
+    βv           = CUDA.zeros(Float64,nx) # visu
     H[[1,end]]  .= 0.0
     H_obs        = copy(H)
     H_ini        = copy(H)
     B            = CuArray( 1.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.25) .+ 2.5 .* exp.(.-(xc./lx .-0.5).^2 ./ 0.025) )
     ELA          = CuArray( collect(2.0 .+ 0.5.*(xc./lx .- 0.5)) )
     β_synt       = CuArray( collect(β0 .- 0.015 .* atan.(xc./lx)) )
-    # display(plot(xc,Array(B))); error("breakpoint")
     β_ini        = 0.4 .* β_synt
     β            = copy(β_ini)
     Jn           = CUDA.zeros(Float64,nx) # cost function gradient
@@ -214,6 +218,7 @@ end
     γ = γ0
     # J_old = cost(Array(H),Array(H_obs))
     J_old = cost(J2,H,H_obs,threads,blocks)
+    J_ini = J_old
     J_evo = Float64[]; iter_evo = Int[]
     for gd_iter = 1:gd_niter
         β_ini .= β
@@ -238,19 +243,20 @@ end
             end
         end
         # visu
-        push!(iter_evo,gd_iter); push!(J_evo,J_old)
+        push!(iter_evo,gd_iter); push!(J_evo,J_old/J_ini)
         @. S = B + H; S[H .== 0] .= NaN
+        @. βv = β; βv[H .== 0] .= NaN
         p1 = plot(xc,[Array(B),Array(S),Array(S_obs)]; title="S"     , label=["B" "S" "S_obs"]      , ylim=(0,Inf), aspect_ratio=2, line = (2, [:solid :solid :dash]))
-        p2 = plot(xc,[Array(β),Array(β_synt)]        ; title="β"     , label=["current" "synthetic"], linewidth=2)
+        p2 = plot(xc,[Array(βv),Array(β_synt)]       ; title="β"     , label=["current" "synthetic"], linewidth=2)
         p3 = plot(xc,Array(ELA)                      ; title="ELA"   , label=""                     , linewidth=2)
         p4 = plot(iter_evo,J_evo                     ; title="misfit", label=""                     , yaxis=:log10  ,linewidth=2)
         display(plot(p1,p2,p3,p4;layout=(2,2),size=(980,980)))
         # check convergence
-        if J_old < gd_ϵtol
-            @printf("  gradient descent converged, misfit = %.1e\n", J_old)
+        if J_old/J_ini < gd_ϵtol
+            @printf("  gradient descent converged, misfit = %.1e\n", J_old/J_ini)
             break
         else
-            @printf("  #iter = %d, misfit = %.1e\n", gd_iter, J_old)
+            @printf("  #iter = %d, misfit = %.1e\n", gd_iter, J_old/J_ini)
         end
     end
     return

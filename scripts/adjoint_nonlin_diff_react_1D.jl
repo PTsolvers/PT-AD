@@ -175,7 +175,7 @@ end
         for bt_iter = 1:bt_niter
             @. β -= γ*Jn
             for ism = 1:5
-                β[2:end-1] .+= 1/5 .* (β[1:end-2] - 2.0.*β[2:end-1] .+ β[3:end])
+                β[2:end-1] .+= 1/5 .* (β[1:end-2] .- 2.0.*β[2:end-1] .+ β[3:end])
             end
             fwd_problem.H .= H_ini
             solve!(fwd_problem)

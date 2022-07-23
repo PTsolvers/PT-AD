@@ -45,7 +45,7 @@ function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dmp)
 end
 
 @views function solve!(problem::ForwardProblem)
-    (;H,B,ELA,R,dR,β,npow,niter,ncheck,ϵtol,dx,dmp) = problem
+    (;H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,dx,dmp) = problem
     nx  = length(H)
     R  .= 0; dR .= 0; Err .= 0; dτ .= 0
     merr = 2ϵtol; iter = 1

@@ -138,7 +138,7 @@ function cost_gradient!(Jn,problem::AdjointProblem)
     (;Ψ,tmp1,tmp2,H,B,ELA,β,npow,threads,blocks,dx) = problem
     tmp1 .= .-Ψ; Jn .= 0.0
     @cuda blocks=blocks threads=threads cost_grad!(tmp1,tmp2,H,B,ELA,β,Jn,npow,dx); synchronize()
-    Jn[1:1] .= Jn[2:2]; Jn[end:end] .= Jn[end-1:end-1]
+    # Jn[1:1] .= Jn[2:2]; Jn[end:end] .= Jn[end-1:end-1]
     return
 end
 

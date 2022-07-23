@@ -32,7 +32,7 @@ end
         ∇S_r   = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
         D_l    = ((∇S_l>0.0) ? (H[ix  ]^(npow+2)*1e-4 + H[ix  ]^npow) : (∇S_l<0.0)*(H[ix-1]^(npow+2) + H[ix-1]^npow))*∇S_l^2
         D_r    = ((∇S_r>0.0) ? (H[ix+1]^(npow+2)*1e-4 + H[ix+1]^npow) : (∇S_r<0.0)*(H[ix  ]^(npow+2) + H[ix  ]^npow))*∇S_r^2
-        dτ[ix] = 0.5*min(0.05, 0.05*dx/(1e-5 + sqrt(0.5*(D_l + D_r))))
+        dτ[ix] = 0.4*min(0.05, 0.05*dx/(1e-5 + sqrt(0.5*(D_l + D_r))))
     end
     return
 end
@@ -61,7 +61,6 @@ end
         @cuda blocks=blocks threads=threads residual!(dR,H,B,ELA,β,npow,dx); synchronize()
         @cuda blocks=blocks threads=threads timestep!(dτ,H,B,npow,dx); synchronize()
         @. R = R*(1.0-dmp/nx) + dτ*dR
-        # @. R[H == 0.0 && dR < 0.0] = 0.0
         @. H = max(0.0, H + dτ*R)
         if iter % ncheck == 0
             @. Err -= H
@@ -102,7 +101,7 @@ end
 @views function solve!(problem::AdjointProblem)
     (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
     nx = length(Ψ)
-    dt = dx/5
+    dt = dx/5/2
     Ψ .= 0; R .= 0; dR .= 0; Err .= 0
     @. ∂J_∂H = H - H_obs
     merr = 2ϵtol; iter = 1
@@ -112,7 +111,6 @@ end
         @cuda blocks=blocks threads=threads residual_grad!(tmp1,tmp2,H,dR,B,ELA,β,npow,dx); synchronize()
         @. R  = R*(1.0-dmp/nx) + dt*dR
         @. Ψ += dt*R
-        # R[H .== 0.0] .= 0.0
         Ψ[H .== 0.0] .= 0.0
         Ψ[1:1] .= 0; Ψ[end:end] .= 0
         if iter % ncheck == 0
@@ -176,8 +174,8 @@ end
     npow         = 3
     β0           = 0.5
     # numerics
-    nx           = 64*8
-    threads      = nx
+    nx           = 64*16
+    threads      = 512
     blocks       = cld(nx,threads)
     niter        = 1000nx
     ncheck       = 1nx
@@ -192,7 +190,8 @@ end
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
     # init
-    H            = 5.0 .* CUDA.ones(Float64,nx)
+    # H            = 4.0 .* CUDA.ones(Float64,nx)
+    H            = CuArray( 3.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.04) )
     S            = CUDA.zeros(Float64,nx) # visu
     βv           = CUDA.zeros(Float64,nx) # visu
     H[[1,end]]  .= 0.0

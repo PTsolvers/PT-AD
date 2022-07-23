@@ -39,7 +39,7 @@ end
 
 mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T}}
     H::A; B::A; ELA::A; R::A; dR::A; β::A; npow::Int
-    Err::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
+    Err::A; dτ::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
     dx::T; dmp::T
 end
 
@@ -47,14 +47,14 @@ function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp
     R   = similar(H)
     dR  = similar(H)
     Err = similar(H)
-    return ForwardProblem(H,B,ELA,R,dR,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
+    dτ  = similar(H)
+    return ForwardProblem(H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
 end
 
 @views function solve!(problem::ForwardProblem)
-    (;H,B,ELA,R,dR,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
+    (;H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
     nx  = length(H)
-    dτ  = CUDA.zeros(Float64,nx)
-    R  .= 0; dR .= 0; Err .=0
+    R  .= 0; dR .= 0; Err .= 0; dτ .= 0
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
         Err .= H
@@ -136,7 +136,7 @@ function cost_gradient!(Jn,problem::AdjointProblem)
     (;Ψ,tmp1,tmp2,H,B,ELA,β,npow,threads,blocks,dx) = problem
     tmp1 .= .-Ψ; Jn .= 0.0
     @cuda blocks=blocks threads=threads cost_grad!(tmp1,tmp2,H,B,ELA,β,Jn,npow,dx); synchronize()
-    Jn[1:1] .= Jn[2:2]; Jn[end:end] .= Jn[end-1:end-1]
+    # Jn[1:1] .= Jn[2:2]; Jn[end:end] .= Jn[end-1:end-1]
     return
 end
 
@@ -248,7 +248,7 @@ end
         p1 = plot(xc,[Array(B),Array(S),Array(S_obs)]; title="S"     , label=["B" "S" "S_obs"]      , ylim=(0,Inf), aspect_ratio=2, line = (2, [:solid :solid :dash]))
         p2 = plot(xc,[Array(βv),Array(β_synt)]       ; title="β"     , label=["current" "synthetic"], linewidth=2)
         p3 = plot(xc,Array(ELA)                      ; title="ELA"   , label=""                     , linewidth=2)
-        p4 = plot(iter_evo,J_evo                     ; title="misfit", label=""                     , yaxis=:log10  ,linewidth=2)
+        p4 = plot(iter_evo,J_evo                     ; title="misfit", label=""                     , yaxis=:log10 ,linewidth=2)
         display(plot(p1,p2,p3,p4;layout=(2,2),size=(980,980)))
         # check convergence
         if J_old/J_ini < gd_ϵtol

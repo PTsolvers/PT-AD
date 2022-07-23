@@ -32,22 +32,22 @@ end
 
 mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T}}
     H::A; B::A; ELA::A; R::A; dR::A; β::A; npow::Int
-    niter::Int; ncheck::Int; ϵtol::T
+    Err::A; dτ::A; niter::Int; ncheck::Int; ϵtol::T
     dx::T; dmp::T
 end
 
 function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dmp)
-    R  = similar(H)
-    dR = similar(H)
-    return ForwardProblem(H,B,ELA,R,dR,β,npow,niter,ncheck,ϵtol,dx,dmp)
+    R   = similar(H)
+    dR  = similar(H)
+    Err = similar(H)
+    dτ  = similar(H)
+    return ForwardProblem(H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,dx,dmp)
 end
 
 @views function solve!(problem::ForwardProblem)
     (;H,B,ELA,R,dR,β,npow,niter,ncheck,ϵtol,dx,dmp) = problem
     nx  = length(H)
-    dτ  = zeros(nx)
-    Err = zeros(nx)
-    R  .= 0; dR .= 0
+    R  .= 0; dR .= 0; Err .= 0; dτ .= 0
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
         Err .= H
@@ -72,7 +72,7 @@ end
 
 mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
     Ψ::A; R::A; dR; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; npow::Int
-    niter::Int; ncheck::Int; ϵtol::T
+    Err::A; niter::Int; ncheck::Int; ϵtol::T
     dx::T; dmp::T
 end
 
@@ -83,15 +83,15 @@ function AdjointProblem(H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dmp)
     tmp1  = similar(H)
     tmp2  = similar(H)
     ∂J_∂H = similar(H)
-    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dmp)
+    Err   = similar(H)
+    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,dx,dmp)
 end
 
 @views function solve!(problem::AdjointProblem)
-    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dmp) = problem
+    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,dx,dmp) = problem
     nx  = length(Ψ)
-    Err = zeros(nx)
     dt = dx/5
-    Ψ .= 0; R .= 0; dR .= 0
+    Ψ .= 0; R .= 0; dR .= 0; Err .= 0
     @. ∂J_∂H = H - H_obs
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter

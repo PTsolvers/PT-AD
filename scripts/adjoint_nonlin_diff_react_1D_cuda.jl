@@ -25,14 +25,14 @@ end
     return
 end
 
-@inbounds function timestep!(dτ,H,B,npow::Int,dx)
+@inbounds function timestep!(dτ,H,B,npow::Int,dτfac,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(H)-1
         ∇S_l   = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r   = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
         D_l    = ((∇S_l>0.0) ? (H[ix  ]^(npow+2)*1e-4 + H[ix  ]^npow) : (∇S_l<0.0)*(H[ix-1]^(npow+2) + H[ix-1]^npow))*∇S_l^2
         D_r    = ((∇S_r>0.0) ? (H[ix+1]^(npow+2)*1e-4 + H[ix+1]^npow) : (∇S_r<0.0)*(H[ix  ]^(npow+2) + H[ix  ]^npow))*∇S_r^2
-        dτ[ix] = 0.4*min(0.05, 0.05*dx/(1e-5 + sqrt(0.5*(D_l + D_r))))
+        dτ[ix] = dτfac*min(0.05, 0.05*dx/(1e-5 + sqrt(0.5*(D_l + D_r))))
     end
     return
 end
@@ -40,32 +40,32 @@ end
 mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T}}
     H::A; B::A; ELA::A; R::A; dR::A; β::A; npow::Int
     Err::A; dτ::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
-    dx::T; dmp::T
+    dx::T; dmp::T; dτfac::T
 end
 
-function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
+function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac)
     R   = similar(H)
     dR  = similar(H)
     Err = similar(H)
     dτ  = similar(H)
-    return ForwardProblem(H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
+    return ForwardProblem(H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac)
 end
 
 @views function solve!(problem::ForwardProblem)
-    (;H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
+    (;H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac) = problem
     nx  = length(H)
     R  .= 0; dR .= 0; Err .= 0; dτ .= 0
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
         Err .= H
         @cuda blocks=blocks threads=threads residual!(dR,H,B,ELA,β,npow,dx); synchronize()
-        @cuda blocks=blocks threads=threads timestep!(dτ,H,B,npow,dx); synchronize()
+        @cuda blocks=blocks threads=threads timestep!(dτ,H,B,npow,dτfac,dx); synchronize()
         @. R = R*(1.0-dmp/nx) + dτ*dR
         @. H = max(0.0, H + dτ*R)
         if iter % ncheck == 0
             @. Err -= H
             merr = maximum(abs.(Err))
-            isfinite(merr) || error("forward solve failed") 
+            (isfinite(merr) && merr>0) || error("forward solve failed") 
         end
         iter += 1
     end
@@ -79,10 +79,10 @@ end
 mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
     Ψ::A; R::A; dR; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; npow::Int
     Err::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
-    dx::T; dmp::T
+    dx::T; dmp::T; dτfac::T
 end
 
-function AdjointProblem(H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
+function AdjointProblem(H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac)
     Ψ     = similar(H)
     R     = similar(H)
     dR    = similar(H)
@@ -90,7 +90,7 @@ function AdjointProblem(H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,threads,blocks,
     tmp2  = similar(H)
     ∂J_∂H = similar(H)
     Err   = similar(H)
-    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
+    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac)
 end
 
 function residual_grad!(tmp1,tmp2,H,dR,B,ELA,β,npow,dx)
@@ -99,9 +99,9 @@ function residual_grad!(tmp1,tmp2,H,dR,B,ELA,β,npow,dx)
 end
 
 @views function solve!(problem::AdjointProblem)
-    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp) = problem
+    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,Err,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac) = problem
     nx = length(Ψ)
-    dt = dx/5/2
+    dt = dx/5*dτfac
     Ψ .= 0; R .= 0; dR .= 0; Err .= 0
     @. ∂J_∂H = H - H_obs
     merr = 2ϵtol; iter = 1
@@ -116,7 +116,7 @@ end
         if iter % ncheck == 0
             @. Err -= Ψ
             merr = maximum(abs.(Err))
-            isfinite(merr) || error("adjoint solve failed") 
+            (isfinite(merr) && merr>0) || error("adjoint solve failed") 
         end
         iter += 1
     end
@@ -174,7 +174,7 @@ end
     npow         = 3
     β0           = 0.5
     # numerics
-    nx           = 64*4#16
+    nx           = 64*16
     threads      = 512
     blocks       = cld(nx,threads)
     niter        = 1000nx
@@ -183,9 +183,10 @@ end
     gd_ϵtol      = 1e-3
     dmp          = 1.0
     dmp_adj      = 1.5
+    dτfac        = 0.7
     gd_niter     = 100
     bt_niter     = 10
-    γ0           = 2.0e-1
+    γ0           = 5.0e-1
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
@@ -200,15 +201,15 @@ end
     B            = CuArray( 1.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.25) .+ 2.5 .* exp.(.-(xc./lx .-0.5).^2 ./ 0.025) )
     ELA          = CuArray( collect(2.0 .+ 0.5.*(xc./lx .- 0.5)) )
     β_synt       = CuArray( collect(β0 .- 0.015 .* atan.(xc./lx)) )
-    β_ini        = 0.4 .* β_synt
+    β_ini        = 0.5 .* β_synt
     β            = copy(β_ini)
     Jn           = CUDA.zeros(Float64,nx) # cost function gradient
     J2           = CUDA.zeros(Float64,nx) # tmp storage
-    synt_problem = ForwardProblem(H_obs,  B,ELA,β_synt,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
-    fwd_problem  = ForwardProblem(H,      B,ELA,β     ,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp)
-    adj_problem  = AdjointProblem(H,H_obs,B,ELA,β     ,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp_adj)
+    synt_problem = ForwardProblem(H_obs,  B,ELA,β_synt,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac)
+    fwd_problem  = ForwardProblem(H,      B,ELA,β     ,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac)
+    adj_problem  = AdjointProblem(H,H_obs,B,ELA,β     ,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp_adj,dτfac)
     # action
-    println("  generating synthetic data...")
+    println("  generating synthetic data (nx=$nx)...")
     solve!(synt_problem)
     println("  done.")
     solve!(fwd_problem)

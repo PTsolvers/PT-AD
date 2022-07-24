@@ -14,35 +14,57 @@ end
 
 @inline ∇Sx(H,B,dx,ix,iy)         = (B[ix,iy]-B[ix-1,iy])/dx + (H[ix,iy]-H[ix-1,iy])/dx
 @inline ∇Sy(H,B,dy,ix,iy)         = (B[ix,iy]-B[ix,iy-1])/dy + (H[ix,iy]-H[ix,iy-1])/dy
-@inline Dcoef(H,npow,ix,iy)       = 1e-2*mypow(H[ix,iy],(npow+2)) + mypow(H[ix,iy],npow)
-@inline D_upw_x(∇Sx,H,npow,ix,iy) = ∇Sx > 0.0 ? Dcoef(H,npow,ix,iy) : Dcoef(H,npow,ix-1,iy)
-@inline D_upw_y(∇Sy,H,npow,ix,iy) = ∇Sy > 0.0 ? Dcoef(H,npow,ix,iy) : Dcoef(H,npow,ix,iy-1)
+@inline Dcoef(H,npow)             = 1e-4*mypow(H,(npow+2)) + mypow(H,npow)
+@inline Dcoef(H,npow,ix,iy)       = Dcoef(H[ix,iy],npow)
+@inline H_av(H,ix,iy)             = 0.25*(H[ix-1,iy-1]+H[ix,iy-1]+H[ix-1,iy]+H[ix,iy])
 
 
-function residual!(R,dτ,H,B,ELA,β,npow,min_dxy,dx,dy)
+function residual!(R,dτ,H,B,ELA,β,npow,cfl,dx,dy)
     ix = (blockIdx().x-1)*blockDim().x + threadIdx().x
     iy = (blockIdx().y-1)*blockDim().y + threadIdx().y
     if ix >= 2 && ix <= size(H,1)-1 && iy >= 2 && iy <= size(H,2)-1
         ∇Sx_l = ∇Sx(H,B,dx,ix  ,iy  )
         ∇Sx_r = ∇Sx(H,B,dx,ix+1,iy  )
-        ∇Sx_d = 0.25*(∇Sx_l + ∇Sx_r + ∇Sx(H,B,dx,ix,iy-1)+∇Sx(H,B,dx,ix+1,iy-1))
-        ∇Sx_u = 0.25*(∇Sx_l + ∇Sx_r + ∇Sx(H,B,dx,ix,iy+1)+∇Sx(H,B,dx,ix+1,iy+1))
-
         ∇Sy_d = ∇Sy(H,B,dy,ix  ,iy  )
         ∇Sy_u = ∇Sy(H,B,dy,ix  ,iy+1)
-        ∇Sy_l = 0.25*(∇Sy_d + ∇Sy_u + ∇Sy(H,B,dy,ix-1,iy) + ∇Sy(H,B,dy,ix-1,iy+1))
-        ∇Sy_r = 0.25*(∇Sy_d + ∇Sy_u + ∇Sy(H,B,dy,ix+1,iy) + ∇Sy(H,B,dy,ix+1,iy+1))
 
-        Dx_l = D_upw_x(∇Sx_l,H,npow,ix  ,iy  )*(∇Sx_l^2+∇Sy_l^2)
-        Dx_r = D_upw_x(∇Sx_r,H,npow,ix+1,iy  )*(∇Sx_r^2+∇Sy_r^2)
-        Dy_d = D_upw_y(∇Sy_d,H,npow,ix  ,iy  )*(∇Sx_d^2+∇Sy_d^2)
-        Dy_u = D_upw_y(∇Sy_u,H,npow,ix  ,iy+1)*(∇Sx_u^2+∇Sy_u^2)
+        ∇Sx_ld = 0.5*(∇Sx_l + ∇Sx(H,B,dx,ix  ,iy-1))
+        ∇Sx_lu = 0.5*(∇Sx_l + ∇Sx(H,B,dx,ix  ,iy+1))
+        ∇Sx_rd = 0.5*(∇Sx_r + ∇Sx(H,B,dx,ix+1,iy-1))
+        ∇Sx_ru = 0.5*(∇Sx_r + ∇Sx(H,B,dx,ix+1,iy+1))
 
-        divQ = (Dx_r*∇Sx_r-Dx_l*∇Sx_l)/dx + (Dy_u*∇Sy_u-Dy_d*∇Sy_d)/dy
+        ∇Sy_ld = 0.5*(∇Sy_d + ∇Sy(H,B,dy,ix-1,iy  ))
+        ∇Sy_rd = 0.5*(∇Sy_d + ∇Sy(H,B,dy,ix+1,iy  ))
+        ∇Sy_lu = 0.5*(∇Sy_u + ∇Sy(H,B,dx,ix-1,iy+1))
+        ∇Sy_ru = 0.5*(∇Sy_u + ∇Sy(H,B,dx,ix+1,iy+1))
+
+        D_ld = Dcoef(H_av(H,ix  ,iy  ),npow)*(∇Sx_ld^2+∇Sy_ld^2)
+        D_lu = Dcoef(H_av(H,ix  ,iy+1),npow)*(∇Sx_lu^2+∇Sy_lu^2)
+        D_rd = Dcoef(H_av(H,ix+1,iy  ),npow)*(∇Sx_rd^2+∇Sy_rd^2)
+        D_ru = Dcoef(H_av(H,ix+1,iy+1),npow)*(∇Sx_ru^2+∇Sy_ru^2)
+
+        Dx_r = 0.5*(D_rd + D_ru)
+        Dx_l = 0.5*(D_ld + D_lu)
+        Dy_d = 0.5*(D_ld + D_rd)
+        Dy_u = 0.5*(D_lu + D_ru)
+        D_c  = 0.25*(D_ld + D_lu + D_rd + D_ru)
+        
+        divQ = -(Dx_r*∇Sx_r-Dx_l*∇Sx_l)/dx - (Dy_u*∇Sy_u-Dy_d*∇Sy_d)/dy
         mb   = min(β[ix,iy]*(B[ix,iy] + H[ix,iy] - ELA[ix,iy]),0.01)
 
-        R[ix,iy]  = divQ + mb
-        dτ[ix,iy] = min(0.02*min_dxy, 0.02*min_dxy/(1e-5 + sqrt(0.25*(Dx_l + Dx_r + Dy_d + Dy_u))))
+        R[ix,iy]  = -divQ + mb
+        dτ[ix,iy] = 0.5*min(1.0, cfl/(1e-2 + D_c))
+    end
+    return
+end
+
+function residual2!(R,H,qHx,qHy,B,ELA,β,dx,dy)
+    ix = (blockIdx().x-1)*blockDim().x + threadIdx().x
+    iy = (blockIdx().y-1)*blockDim().y + threadIdx().y
+    if ix >= 2 && ix <= size(H,1)-1 && iy >= 2 && iy <= size(H,2)-1
+        divQ     = (qHx[ix,iy] - qHx[ix-1,iy])/dx + (qHy[ix,iy] - qHy[ix,iy-1])/dy
+        A        = min(β[ix,iy]*(B[ix,iy] + H[ix,iy] - ELA[ix,iy]),0.01)
+        R[ix,iy] = -divQ + A
     end
     return
 end
@@ -58,26 +80,22 @@ function mask_by_field!(A,Eq,Less)
     return
 end
 
-function grad_residual_H!(dR,dτ,H,B,ELA,β,npow,tmp1,tmp2,min_dxy,dx,dy)
-    Enzyme.autodiff_deferred(residual!,Duplicated(tmp1,tmp2),Const(dτ),Duplicated(H,dR),Const(B),Const(ELA),Const(β),Const(npow),Const(min_dxy),Const(dx),Const(dy))
+function grad_residual_H!(dR,H,B,ELA,β,dτ,npow,cfl,tmp1,tmp2,dx,dy)
+    Enzyme.autodiff_deferred(residual!,Duplicated(tmp1,tmp2),Const(dτ),Duplicated(H,dR),Const(B),Const(ELA),Const(β),Const(npow),Const(cfl),Const(dx),Const(dy))
     return
 end
 
-function grad_residual_β!(Jn,dτ,H,B,ELA,β,npow,tmp1,tmp2,min_dxy,dx,dy)
-    Enzyme.autodiff_deferred(residual!,Duplicated(tmp2,tmp1),Const(dτ),Const(H),Const(B),Const(ELA),Duplicated(β,Jn),Const(npow),Const(min_dxy),Const(dx),Const(dy))
+function grad_residual_β!(Jn,H,B,ELA,β,dτ,npow,cfl,tmp1,tmp2,dx,dy)
+    Enzyme.autodiff_deferred(residual!,Duplicated(tmp2,tmp1),Const(dτ),Const(H),Const(B),Const(ELA),Duplicated(β,Jn),Const(npow),Const(cfl),Const(dx),Const(dy))
     return
 end
 
-function timestep!(H,R,dR,dτ,dmp_nxy)
+function update_H!(dHdτ,H,R,dτ,dmp)
     ix = (blockIdx().x-1)*blockDim().x + threadIdx().x
     iy = (blockIdx().y-1)*blockDim().y + threadIdx().y
     if ix >= 2 && ix <= size(H,1)-1 && iy >= 2 && iy <= size(H,2)-1
-        if H[ix,iy] == 0.0 && dR[ix,iy] < 0.0
-            R[ix,iy] = 0.0
-        else
-            R[ix,iy] = R[ix,iy]*(1.0-dmp_nxy) + dτ[ix,iy]*dR[ix,iy]
-            H[ix,iy] = max(0.0, H[ix,iy] + dτ[ix,iy]*R[ix,iy])
-        end
+        dHdτ[ix,iy] = dHdτ[ix,iy]*dmp + R[ix,iy]
+        H[ix,iy]    = max(0.0, H[ix,iy] + dτ[ix,iy]*dHdτ[ix,iy])
     end
     return
 end
@@ -100,18 +118,17 @@ end
 @views function solve!(problem::ForwardProblem)
     (;H,B,ELA,R,dR,dτ,β,npow,niter,ncheck,ϵtol,dx,dy,dmp) = problem
     nx,ny    = size(H)
-    dmp_nxy  = dmp/min(nx,ny)
-    min_dxy  = min(dx,dy)
+    cfl      = 0.2*min(dx,dy)^2
     nthreads = (32,16)
     nblocks  = cld.((nx,ny),nthreads)
     R  .= 0; dR .= 0; dτ .= 0
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
-        CUDA.@sync @cuda threads=nthreads blocks=nblocks residual!(dR,dτ,H,B,ELA,β,npow,min_dxy,dx,dy)
-        CUDA.@sync @cuda threads=nthreads blocks=nblocks timestep!(H,R,dR,dτ,dmp_nxy)
+        CUDA.@sync @cuda threads=nthreads blocks=nblocks residual!(R,dτ,H,B,ELA,β,npow,cfl,dx,dy)
+        CUDA.@sync @cuda threads=nthreads blocks=nblocks update_H!(dR,H,R,dτ,dmp)
         if iter % ncheck == 0
-            CUDA.@sync @cuda threads=nthreads blocks=nblocks mask_by_field!(dR,H,dR)
-            merr = maximum(abs.(dR))
+            CUDA.@sync @cuda threads=nthreads blocks=nblocks mask_by_field!(R,H,dR)
+            merr = maximum(abs.(R))
             # display(heatmap(Array(H')))
             isfinite(merr) || error("forward solve failed") 
         end
@@ -125,7 +142,7 @@ end
 end
 
 mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
-    Ψ::A; R::A; dR::A; dτ::A; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; npow::Int
+    Ψ::A; R::A; dR::A; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; dτ::A; npow::Int
     niter::Int; ncheck::Int; ϵtol::T
     dx::T; dy::T; dmp::T
 end
@@ -138,14 +155,14 @@ function AdjointProblem(H,H_obs,B,ELA,β,npow,dx,dy,dmp,niter,ncheck,ϵtol)
     tmp1  = similar(H)
     tmp2  = similar(H)
     ∂J_∂H = similar(H)
-    return AdjointProblem(Ψ,R,dR,dτ,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dy,dmp)
+    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,dx,dy,dmp)
 end
 
 function update_Ψ!(Ψ,R,dR,H,dt,dmp_nxy)
     ix = (blockIdx().x-1)*blockDim().x + threadIdx().x
     iy = (blockIdx().y-1)*blockDim().y + threadIdx().y
     if ix >= 2 && ix <= size(H,1)-1 && iy >= 2 && iy <= size(H,2)-1
-        if H[ix,iy] == 0.0
+        if H[ix,iy] <= 1e-2
             R[ix,iy] = 0.0
             Ψ[ix,iy] = 0.0
         else
@@ -160,11 +177,11 @@ function update_Ψ!(Ψ,R,dR,H,dt,dmp_nxy)
 end
 
 @views function solve!(problem::AdjointProblem)
-    (;Ψ,R,dR,dτ,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dy,dmp) = problem
+    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,dx,dy,dmp) = problem
     nx,ny = size(Ψ)
-    dt = min(dx,dy)/6
+    cfl   = 0.2*min(dx,dy)^2
+    dt = min(dx,dy)/2.1
     dmp_nxy = dmp/min(nx,ny)
-    min_dxy = min(dx,dy)
     Ψ .= 0; R .= 0; dR .= 0
     @. ∂J_∂H = H - H_obs
     merr = 2ϵtol; iter = 1
@@ -172,7 +189,7 @@ end
     nblocks  = cld.((nx,ny),nthreads)
     while merr >= ϵtol && iter < niter
         dR .= .-∂J_∂H; tmp2 .= Ψ
-        CUDA.@sync @cuda threads=nthreads blocks=nblocks grad_residual_H!(dR,dτ,H,B,ELA,β,npow,tmp1,tmp2,min_dxy,dx,dy)
+        CUDA.@sync @cuda threads=nthreads blocks=nblocks grad_residual_H!(dR,H,B,ELA,β,dτ,npow,cfl,tmp1,tmp2,dx,dy)
         CUDA.@sync @cuda threads=nthreads blocks=nblocks update_Ψ!(Ψ,R,dR,H,dt,dmp_nxy)
         if iter % ncheck == 0
             merr = maximum(abs.(R[2:end-1,2:end-1]))
@@ -191,11 +208,11 @@ end
 function cost_gradient!(Jn,problem::AdjointProblem)
     (;Ψ,tmp1,tmp2,H,B,ELA,β,dτ,npow,dx,dy) = problem
     nx,ny   = size(H)
-    min_dxy = min(dx,dy)
+    cfl     = 0.2*min(dx,dy)^2
     tmp1 .= .-Ψ; Jn .= 0.0
     nthreads = (32,16)
     nblocks  = ceil.(Int,(nx,ny)./nthreads)
-    CUDA.@sync @cuda threads=nthreads blocks=nblocks grad_residual_β!(Jn,dτ,H,B,ELA,β,npow,tmp1,tmp2,min_dxy,dx,dy)
+    CUDA.@sync @cuda threads=nthreads blocks=nblocks grad_residual_β!(Jn,H,B,ELA,β,dτ,npow,cfl,tmp1,tmp2,dx,dy)
     Jn[[1,end],:] .= Jn[[2,end-1],:]; Jn[:,[1,end]] .= Jn[:,[2,end-1]]
     return
 end
@@ -227,12 +244,12 @@ end
     # numerics
     nx           = 256
     ny           = ceil(Int,nx*ly/lx)
-    niter        = 500max(nx,ny)
+    niter        = 200max(nx,ny)
     ncheck       = 1min(nx,ny)
     ϵtol         = 1e-4
     gd_ϵtol      = 1e-3
-    dmp          = 0.6
-    dmp_adj      = 1.6
+    dmp          = 0.82
+    dmp_adj      = 1.7
     gd_niter     = 100
     bt_niter     = 3
     γ0           = 1.0e0
@@ -241,16 +258,16 @@ end
     xc           = LinRange(dx/2,lx-dx/2,nx)
     yc           = LinRange(dy/2,ly-dy/2,ny)
     # init
-    H            = CUDA.zeros(Float64,nx,ny) .+ 0.0; H[[1,end],:] .= 0; H[:,[1,end]] .= 0
+    hatfun1      = CuArray(@. 1.0*exp((-(xc/lx - 0.5)^2 - (yc'/lx - 0.5*ly/lx)^2) / 0.25))
+    hatfun2      = CuArray(@. 2.5*exp((-(xc/lx - 0.5)^2 - (yc'/lx - 0.5*ly/lx)^2) / 0.025))
+    H            = CUDA.zeros(Float64,nx,ny) .+ 0.0.*hatfun1; H[[1,end],:] .= 0; H[:,[1,end]] .= 0
     S            = CUDA.zeros(Float64,nx,ny)
     H_obs        = copy(H)
     H_ini        = copy(H)
-    hatfun1      = CuArray(@. 1.0*exp((-(xc/lx - 0.5)^2 - (yc'/lx - 0.5*ly/lx)^2) / 0.25))
-    hatfun2      = CuArray(@. 2.5*exp((-(xc/lx - 0.5)^2 - (yc'/lx - 0.5*ly/lx)^2) / 0.025))
     B            = hatfun1 .+ hatfun2
     ELA          = CuArray(@. 2.0 + 1.0*(xc/lx - 0.5) + 0.0*yc')
-    β_synt       = CuArray(@. β0 - 0.0 * atan(xc/lx) - 0.015 * atan(yc'/lx))
-    β_ini        = 0.4 .* β_synt
+    β_synt       = CuArray(@.     β0 - 0.0 * atan(xc/lx) - 0.015 * atan(yc'/lx))
+    β_ini        = CuArray(@. 0.7*β0 - 0.0 * atan(xc/lx) - 0.050 * atan(yc'/lx))
     β            = copy(β_ini)
     β2           = similar(β)
     Jn           = CUDA.zeros(Float64,nx,ny) # cost function gradient
@@ -275,7 +292,8 @@ end
         cost_gradient!(Jn,adj_problem)
         # line search
         for bt_iter = 1:bt_niter
-            @. β -= γ*Jn
+            @. β = β - γ*Jn
+            β[[1,end],:] .= β[[2,end-1],:]; β[:,[1,end]] .= β[:,[2,end-1]]
             smooth!(β,β2,5)
             β[[1,end],:] .= β[[2,end-1],:]; β[:,[1,end]] .= β[:,[2,end-1]]
             fwd_problem.H .= H_ini
@@ -286,7 +304,7 @@ end
                 J_old = J_new
                 break
             else
-                β .= β_ini .+ 0.025.*(CUDA.rand(nx,ny) .- 0.5)
+                β .= β_ini .+ 0.0.*(CUDA.rand(nx,ny) .- 0.5)
                 γ = max(γ*0.5, 0.1*γ0)
             end
         end

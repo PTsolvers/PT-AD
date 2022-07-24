@@ -48,26 +48,26 @@ end
     (;H,B,ELA,R,dR,β,npow,Err,dτ,niter,ncheck,ϵtol,dx,dmp) = problem
     nx  = length(H)
     R  .= 0; dR .= 0; Err .= 0; dτ .= 0
-    merr = 2ϵtol; iter = 1
+    merr = 2ϵtol; iter = 1; t_tic = 0
     while merr >= ϵtol && iter < niter
-        Err .= H
+        if (iter==10) t_tic = Base.time() end
+        # Err .= H
         residual!(dR,H,B,ELA,β,npow,dx)
         timestep!(dτ,H,B,npow,dx)
-        @. R = R*(1.0-dmp/nx) + dτ*dR
-        # @. R[H == 0.0 && dR < 0.0] = 0.0
+        @. R = R #=*(1.0-dmp/nx)=# + dτ*dR
         @. H = max(0.0, H + dτ*R)
-        if iter % ncheck == 0
-            @. Err -= H
-            merr = maximum(abs.(Err))
-            isfinite(merr) || error("forward solve failed") 
-        end
+        # if iter % ncheck == 0
+        #     @. Err -= H
+        #     merr = maximum(abs.(Err))
+        #     isfinite(merr) || error("forward solve failed") 
+        # end
         iter += 1
     end
-    if iter == niter && merr >= ϵtol
-        error("forward solve not converged")
-    end
-    @printf("    forward solve converged: #iter/nx = %.1f, err = %.1e\n",iter/nx,merr)
-    return
+    # if iter == niter && merr >= ϵtol
+    #     error("forward solve not converged")
+    # end
+    # @printf("    forward solve converged: #iter/nx = %.1f, err = %.1e\n",iter/nx,merr)
+    return Base.time()-t_tic, iter-10
 end
 
 mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
@@ -93,35 +93,35 @@ end
     dt = dx/5
     Ψ .= 0; R .= 0; dR .= 0; Err .= 0
     @. ∂J_∂H = H - H_obs
-    merr = 2ϵtol; iter = 1
+    merr = 2ϵtol; iter = 1; t_tic = 0
     while merr >= ϵtol && iter < niter
+        if (iter==10) t_tic = Base.time() end
         dR .= .-∂J_∂H; tmp2 .= Ψ
-        Err .= Ψ
+        # Err .= Ψ
         Enzyme.autodiff(residual!,Duplicated(tmp1,tmp2),Duplicated(H,dR),Const(B),Const(ELA),Const(β),Const(npow),Const(dx))
-        @. R  = R*(1.0-dmp/nx) + dt*dR
+        @. R  = R #=*(1.0-dmp/nx)=# + dt*dR
         @. Ψ += dt*R
-        # R[H .== 0.0] .= 0.0
-        Ψ[H .== 0.0] .= 0.0
-        Ψ[1] = 0; Ψ[end] = 0
-        if iter % ncheck == 0
-            @. Err -= Ψ
-            merr = maximum(abs.(Err))
-            isfinite(merr) || error("adjoint solve failed") 
-        end
+        # Ψ[H .== 0.0] .= 0.0
+        # Ψ[1] = 0; Ψ[end] = 0
+        # if iter % ncheck == 0
+        #     @. Err -= Ψ
+        #     merr = maximum(abs.(Err))
+        #     isfinite(merr) || error("adjoint solve failed") 
+        # end
         iter += 1
     end
-    if iter == niter && merr >= ϵtol
-        error("adjoint solve not converged")
-    end
-    @printf("    adjoint solve converged: #iter/nx = %.1f, err = %.1e\n",iter/nx,merr)
-    return
+    # if iter == niter && merr >= ϵtol
+    #     error("adjoint solve not converged")
+    # end
+    # @printf("    adjoint solve converged: #iter/nx = %.1f, err = %.1e\n",iter/nx,merr)
+    return Base.time()-t_tic, iter-10
 end
 
 function cost_gradient!(Jn,problem::AdjointProblem)
     (;Ψ,tmp1,tmp2,H,B,ELA,β,npow,dx) = problem
     tmp1 .= .-Ψ; Jn .= 0.0
     Enzyme.autodiff(residual!,Duplicated(tmp2,tmp1),Const(H),Const(B),Const(ELA),Duplicated(β,Jn),Const(npow),Const(dx))
-    Jn[1] = Jn[2]; Jn[end] = Jn[end-1]
+    # Jn[1] = Jn[2]; Jn[end] = Jn[end-1]
     return
 end
 
@@ -131,8 +131,10 @@ end
     npow         = 3
     β0           = 0.5
     # numerics
-    nx           = 64*1
-    niter        = 1000nx
+    # nx           = 64*1
+    for i ∈ [0,1,2,3,4,5]
+    nx           = 512 * 10 ^ i
+    niter        = 100#1000nx
     ncheck       = 1nx
     ϵtol         = 1e-5
     gd_ϵtol      = 1e-3
@@ -145,7 +147,7 @@ end
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
     # init
-    H            = 5.0 .* ones(nx)
+    H            = 3.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.04) #5.0 .* ones(nx)
     S            = zeros(nx) # visu
     βv           = zeros(nx) # visu
     H[[1,end]]  .= 0.0
@@ -161,6 +163,28 @@ end
     fwd_problem  = ForwardProblem(H,      B,ELA,β     ,npow,niter,ncheck,ϵtol,dx,dmp)
     adj_problem  = AdjointProblem(H,H_obs,B,ELA,β     ,npow,niter,ncheck,ϵtol,dx,dmp_adj)
     # action
+    GC.enable(false)
+
+    # println("Timing nx=$nx")
+    time1, niter1 = solve!(synt_problem)
+    # println("--> Synt solve = $time1 s, $niter1 iters, $(time1/niter1) s/iter, Teff = $(7*8*nx/1024/1024/1024/(time1/niter1)) GB/s")
+    time2, niter2 = solve!(fwd_problem)
+    # println("--> Fwd solve = $time2 s, $niter2 iters, $(time2/niter2) s/iter, Teff = $(7*8*nx/1024/1024/1024/(time2/niter2)) GB/s")
+    time3, niter3 = solve!(adj_problem)
+    # println("--> Adj solve = $time3 s, $niter3 iters, $(time3/niter3) s/iter, Teff = $(9*8*nx/1024/1024/1024/(time3/niter3)) GB/s")
+    cost_gradient!(Jn,adj_problem)
+    time4 = @elapsed cost_gradient!(Jn,adj_problem)
+    # println("--> Cost fun grad eval = $time4 s")
+
+    i==0 && println("nx  niter  time_synt  time_fwd  time_adj time/iter_synt time/iter_fwd time/iter_adj Teff_synt Teff_fwd Teff_adj cost_fun_grd_eval_sec")
+    println("$nx $niter $(time1) $(time2) $(time3) $(time1/niter1) $(time2/niter2) $(time3/niter3) $(7*8*nx/1024/1024/1024/(time1/niter1)) $(7*8*nx/1024/1024/1024/(time2/niter2)) $(9*8*nx/1024/1024/1024/(time3/niter3)) $time4")
+
+    
+    GC.enable(true)
+    end
+    error("timing done.")
+
+
     println("  generating synthetic data...")
     solve!(synt_problem)
     # aa = @. min(β_synt*(B + H_obs - ELA),0.01)

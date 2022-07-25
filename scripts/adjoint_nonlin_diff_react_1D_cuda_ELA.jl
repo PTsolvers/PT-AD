@@ -18,8 +18,10 @@ end
     if ix>=2 && ix<=length(R)-1
         ∇S_l  = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r  = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
-        D_l   = ((∇S_l>0.0) ? (mypow(H[ix  ],npow+2)*1e-4 + mypow(H[ix  ],npow)) : (mypow(H[ix-1],npow+2) + mypow(H[ix-1],npow)))*mypow(∇S_l,2)
-        D_r   = ((∇S_r>0.0) ? (mypow(H[ix+1],npow+2)*1e-4 + mypow(H[ix+1],npow)) : (mypow(H[ix  ],npow+2) + mypow(H[ix  ],npow)))*mypow(∇S_r,2)
+        H_l   = (H[ix  ]+H[ix-1])*0.5
+        H_r   = (H[ix+1]+H[ix  ])*0.5
+        D_l   = (mypow(H_l,npow+2)*1e-4 + mypow(H_l,npow)) * mypow(∇S_l,2)
+        D_r   = (mypow(H_r,npow+2)*1e-4 + mypow(H_r,npow)) * mypow(∇S_r,2)
         R[ix] = (D_r*∇S_r - D_l*∇S_l)/dx + min(β[ix]*(B[ix] + H[ix] - ELA[ix]),0.01)
     end
     return
@@ -30,9 +32,12 @@ end
     if ix>=2 && ix<=length(H)-1
         ∇S_l   = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r   = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
-        D_l    = ((∇S_l>0.0) ? (H[ix  ]^(npow+2)*1e-4 + H[ix  ]^npow) : (∇S_l<0.0)*(H[ix-1]^(npow+2) + H[ix-1]^npow))*∇S_l^2
-        D_r    = ((∇S_r>0.0) ? (H[ix+1]^(npow+2)*1e-4 + H[ix+1]^npow) : (∇S_r<0.0)*(H[ix  ]^(npow+2) + H[ix  ]^npow))*∇S_r^2
-        dτ[ix] = dτfac*min(0.05, 0.05*dx/(1e-5 + sqrt(0.5*(D_l + D_r))))
+        H_l    = (H[ix  ]+H[ix-1])*0.5
+        H_r    = (H[ix+1]+H[ix  ])*0.5
+        D_l    = (mypow(H_l,npow+2)*1e-4 + mypow(H_l,npow)) * mypow(∇S_l,2)
+        D_r    = (mypow(H_r,npow+2)*1e-4 + mypow(H_r,npow)) * mypow(∇S_r,2)
+        dτ[ix] = dτfac*min(0.1, 0.2*dx^2/(1e-3 + 0.5*(D_l + D_r)))
+
     end
     return
 end
@@ -60,7 +65,7 @@ end
         Err .= H
         @cuda blocks=blocks threads=threads residual!(dR,H,B,ELA,β,npow,dx); synchronize()
         @cuda blocks=blocks threads=threads timestep!(dτ,H,B,npow,dτfac,dx); synchronize()
-        @. R = R*(1.0-dmp/nx) + dτ*dR
+        @. R = R*dmp + dR
         @. H = max(0.0, H + dτ*R)
         if iter % ncheck == 0
             @. Err -= H
@@ -111,7 +116,7 @@ end
         @cuda blocks=blocks threads=threads residual_grad!(tmp1,tmp2,H,dR,B,ELA,β,npow,dx); synchronize()
         @. R  = R*(1.0-dmp/nx) + dt*dR
         @. Ψ += dt*R
-        Ψ[H .== 0.0] .= 0.0
+        Ψ[H .<= 1e-2] .= 0.0
         Ψ[1:1] .= 0; Ψ[end:end] .= 0
         if iter % ncheck == 0
             @. Err -= Ψ
@@ -153,17 +158,18 @@ function cost(J2,H,H_obs,threads,blocks)
     return sum(J2)
 end
 
-@inbounds function smooth!(A)
+@inbounds function laplacian!(A2,A)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(A)-1
-        A[ix] += 1/5 * (A[ix-1] - 2.0*A[ix] + A[ix+1])
+        A2[ix] = A[ix] + 1/5 * (A[ix-1] - 2.0*A[ix] + A[ix+1])
     end
     return
 end
 
-function smooth(A,nsm,threads,blocks)
+function smooth(A2,A,nsm,threads,blocks)
     for ism = 1:nsm
-        @cuda blocks=blocks threads=threads smooth!(A); synchronize()
+        @cuda blocks=blocks threads=threads laplacian!(A2,A); synchronize()
+        A,A2 = A2,A
     end
     return
 end
@@ -172,36 +178,38 @@ end
     # physics
     lx           = 100.0
     npow         = 3
-    β0           = 0.5
+    β0           = 0.1
     # numerics
-    nx           = 64*8#*16*2
+    nx           = 64*16#*16*2
     threads      = 512
     blocks       = cld(nx,threads)
     niter        = 1000nx
     ncheck       = 1nx
     ϵtol         = 1e-5
-    gd_ϵtol      = 1e-4
-    dmp          = 1.0
-    dmp_adj      = 1.5
-    dτfac        = 0.9 # 1024->0.7, 2048->0.4
+    gd_ϵtol      = 5e-4
+    dmp          = 0.7
+    dmp_adj      = 1.4
+    dτfac        = 0.5 # 1024->0.7, 2048->0.4
     gd_niter     = 100
     bt_niter     = 10
-    γ0           = 1e1
+    γ0           = 2e-1
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
     # init
-    H            = CuArray( 3.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.04) )
+    H            = CuArray( 1.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.01) )
+    # display(plot(xc,Array(H)));error("stop")
     S            = CUDA.zeros(Float64,nx) # visu
     ELAv         = CUDA.zeros(Float64,nx) # visu
     H[[1,end]]  .= 0.0
     H_obs        = copy(H)
     H_ini        = copy(H)
-    B            = CuArray( 1.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.25) .+ 2.5 .* exp.(.-(xc./lx .-0.5).^2 ./ 0.025) )
-    ELA_synt     = CuArray( collect(2.0 .+ 1.0.*(xc./lx .- 0.5)) )
-    ELA_ini      = CuArray( 2.1 .+ 0.05 .* rand(nx) )
+    B            = CuArray( 4.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.25) .+ 8.0 .* exp.(.-(xc./lx .-0.5).^2 ./ 0.025) )
+    ELA_synt     = CuArray( collect(5.5 .+ 1.0.*(xc./lx .- 0.5)) )
+    ELA_ini      = CuArray( 5.5 .+ 0.05 .* rand(nx) )
     ELA          = copy(ELA_ini)
-    β            = CuArray( clamp.(β0 .+ 0.04 .* (1.0 .- 2.0 .* 10.0 .* abs.((2.0 .* xc/lx .- 1.0)./10.0)), 0.495, 0.51) )
+    ELA2         = similar(ELA_ini)
+    β            = β0.*CUDA.ones(Float64,nx)#CuArray( clamp.(β0 .+ 0.04 .* (1.0 .- 2.0 .* 10.0 .* abs.((2.0 .* xc/lx .- 1.0)./10.0)), 0.495, 0.51) )
     Jn           = CUDA.zeros(Float64,nx) # cost function gradient
     J2           = CUDA.zeros(Float64,nx) # tmp storage
     synt_problem = ForwardProblem(H_obs,  B,ELA_synt,β,npow,niter,ncheck,ϵtol,threads,blocks,dx,dmp,dτfac)
@@ -211,6 +219,8 @@ end
     println("  generating synthetic data (nx=$nx) ...")
     solve!(synt_problem)
     ∫A_synt = sum(min.(β.*(B.+H_obs.-ELA_synt),0.01))
+    # A_synt = min.(β.*(B.+H_obs.-ELA_synt),0.01)
+    # display(plot(xc,Array(A_synt)));error("stop")
     println("  done.")
     solve!(fwd_problem)
     println("  gradient descent")
@@ -228,7 +238,7 @@ end
         # line search
         for bt_iter = 1:bt_niter
             @. ELA -= γ*Jn
-            smooth(β,10,threads,blocks)
+            smooth(ELA2,ELA,200,threads,blocks)
             fwd_problem.H .= H_ini
             solve!(fwd_problem)
             J_new = cost(J2,H,H_obs,threads,blocks)

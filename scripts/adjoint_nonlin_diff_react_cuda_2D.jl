@@ -180,7 +180,7 @@ end
     (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,dx,dy,dmp) = problem
     nx,ny = size(Ψ)
     cfl   = 0.2*min(dx,dy)^2
-    dt = min(dx,dy)/2.1
+    dt    = min(dx,dy)/2.1
     dmp_nxy = dmp/min(nx,ny)
     Ψ .= 0; R .= 0; dR .= 0
     @. ∂J_∂H = H - H_obs

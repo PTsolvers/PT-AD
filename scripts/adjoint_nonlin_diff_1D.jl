@@ -70,7 +70,7 @@ end
     println("forward solve...")
     for iter = 1:niter
         residual!(dR_obs,H_obs,npow_s,dx)
-        residual!(dR,H        ,npow_i ,dx)
+        residual!(dR,H        ,npow_i,dx)
         @. R_obs  = R_obs*(1.0-dmp/nx) + dt*dR_obs
         @. R      = R    *(1.0-dmp/nx) + dt*dR
         @. H_obs += dt*R_obs

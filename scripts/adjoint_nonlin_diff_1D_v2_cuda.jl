@@ -16,7 +16,8 @@ end
 @inbounds function residual!(R,H,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(R)-1
-        R[ix] = (mypow(H[ix-1],(npow[ix-1]+1)) - 2.0*mypow(H[ix],(npow[ix]+1)) + mypow(H[ix+1],(npow[ix+1]+1)))/dx/dx/(npow[ix]+1)
+        # R[ix] = (mypow(H[ix-1],(npow[ix-1]+1)) - 2.0*mypow(H[ix],(npow[ix]+1)) + mypow(H[ix+1],(npow[ix+1]+1)))/dx/dx/(npow[ix]+1)
+        R[ix] = (H[ix-1]^(npow[ix-1]+1) - 2.0*H[ix]^(npow[ix]+1) + H[ix+1]^(npow[ix+1]+1))/dx/dx/(npow[ix]+1)
     end
     return
 end
@@ -172,33 +173,33 @@ end
         # compute cost function gradient
         cost_gradient!(Jn,adj_problem)
         error("stop")
-        # line search
-        for bt_iter = 1:bt_niter
-            @. npow -= γ*Jn
-            fwd_problem.H .= H_ini
-            solve!(fwd_problem)
-            J_new = cost(Array(H),Array(H_obs)) # CPU function for now
-            if J_new < J_old
-                γ *= 1.2
-                J_old = J_new
-                break
-            else
-                npow .= npow_init
-                γ *= 0.5
-            end
-        end
-        push!(iter_evo,gd_iter); push!(J_evo,J_old)
-        if J_old < gd_ϵtol
-            @printf("  gradient descent converged, misfit = %.1e\n", J_old)
-            break
-        else
-            @printf("  #iter = %d, misfit = %.1e\n", gd_iter, J_old)
-        end
-        # visu
-        p1 = plot(xc,[H,H_obs]       ; title="H"     , label=["H" "H_obs"])
-        p2 = plot(iter_evo,J_evo     ; title="misfit", label="", yaxis=:log10)
-        p3 = plot(xc,[npow,npow_synt]; title="n"      , label=["current" "synthetic"])
-        display(plot(p1,p2,p3;layout=(1,3)))
+        # # line search
+        # for bt_iter = 1:bt_niter
+        #     @. npow -= γ*Jn
+        #     fwd_problem.H .= H_ini
+        #     solve!(fwd_problem)
+        #     J_new = cost(Array(H),Array(H_obs)) # CPU function for now
+        #     if J_new < J_old
+        #         γ *= 1.2
+        #         J_old = J_new
+        #         break
+        #     else
+        #         npow .= npow_init
+        #         γ *= 0.5
+        #     end
+        # end
+        # push!(iter_evo,gd_iter); push!(J_evo,J_old)
+        # if J_old < gd_ϵtol
+        #     @printf("  gradient descent converged, misfit = %.1e\n", J_old)
+        #     break
+        # else
+        #     @printf("  #iter = %d, misfit = %.1e\n", gd_iter, J_old)
+        # end
+        # # visu
+        # p1 = plot(xc,[H,H_obs]       ; title="H"     , label=["H" "H_obs"])
+        # p2 = plot(iter_evo,J_evo     ; title="misfit", label="", yaxis=:log10)
+        # p3 = plot(xc,[npow,npow_synt]; title="n"      , label=["current" "synthetic"])
+        # display(plot(p1,p2,p3;layout=(1,3)))
     end
     return
 end

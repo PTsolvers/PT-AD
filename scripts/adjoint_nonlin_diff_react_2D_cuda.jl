@@ -1,7 +1,7 @@
 using Enzyme,Plots,Printf,CUDA,MAT
 
-const DO_SAVE = true
-const DO_VISU = false
+const DO_SAVE = false
+const DO_VISU = true
 
 @inline function mypow(a,n::Integer)
     tmp = a*a
@@ -283,7 +283,7 @@ end
     solve!(fwd_problem)
     println("  gradient descent")
     S_obs = B .+ H_obs; S_obs[H_obs .== 0] .= NaN
-    matwrite("out_visu/run2/static.mat",Dict("beta_synt"=>Array(β_synt),"beta"=>Array(β),"B"=>Array(B),"ELA"=>Array(ELA),"H_obs"=>Array(H_obs)))
+    DO_SAVE && matwrite("out_visu/run2/static.mat",Dict("beta_synt"=>Array(β_synt),"beta"=>Array(β),"B"=>Array(B),"ELA"=>Array(ELA),"H_obs"=>Array(H_obs)))
     γ = γ0
     J_old = sqrt(cost(H,H_obs)*dx*dy)
     J_ini = J_old
@@ -322,10 +322,8 @@ end
             p4 = plot(iter_evo,J_evo; title="misfit", label="", yaxis=:log10,linewidth=2)
             display(plot(p1,p2,p3,p4;layout=(2,2),size=(980,980)))
         end
-        if DO_SAVE
-            matwrite("out_visu/run2/step_$gd_iter.mat",Dict("beta"=>Array(β),"iter_evo"=>iter_evo,"J_evo"=>J_evo,"H"=>Array(H),"gamma"=>γ,"Psi"=>Array(adj_problem.Ψ),"Jn"=>Array(Jn)))
-        end
-            # check convergence
+        DO_SAVE && matwrite("out_visu/run2/step_$gd_iter.mat",Dict("beta"=>Array(β),"iter_evo"=>iter_evo,"J_evo"=>J_evo,"H"=>Array(H),"gamma"=>γ,"Psi"=>Array(adj_problem.Ψ),"Jn"=>Array(Jn)))
+        # check convergence
         if J_old/J_ini < gd_ϵtol
             @printf("  gradient descent converged, misfit = %.1e\n", J_old)
             break

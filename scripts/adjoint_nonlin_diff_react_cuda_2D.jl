@@ -1,4 +1,7 @@
-using Enzyme,Plots,Printf,CUDA
+using Enzyme,Plots,Printf,CUDA,MAT
+
+const DO_SAVE = true
+const DO_VISU = false
 
 @inline function mypow(a,n::Integer)
     tmp = a*a
@@ -63,7 +66,7 @@ function residual2!(R,H,qHx,qHy,B,ELA,β,dx,dy)
     iy = (blockIdx().y-1)*blockDim().y + threadIdx().y
     if ix >= 2 && ix <= size(H,1)-1 && iy >= 2 && iy <= size(H,2)-1
         divQ     = (qHx[ix,iy] - qHx[ix-1,iy])/dx + (qHy[ix,iy] - qHy[ix,iy-1])/dy
-        A        = min(β[ix,iy]*(B[ix,iy] + H[ix,iy] - ELA[ix,iy]),0.01)
+        A        = min(β[ix,iy]*(B[ix,iy] + H[ix,iy] - ELA[ix,iy]),0.25)
         R[ix,iy] = -divQ + A
     end
     return
@@ -161,7 +164,7 @@ end
 function update_Ψ!(Ψ,R,dR,H,dt,dmp_nxy)
     ix = (blockIdx().x-1)*blockDim().x + threadIdx().x
     iy = (blockIdx().y-1)*blockDim().y + threadIdx().y
-    if ix >= 2 && ix <= size(H,1)-1 && iy >= 2 && iy <= size(H,2)-1
+    if ix >= 1 && ix <= size(H,1) && iy >= 1 && iy <= size(H,2)
         if H[ix,iy] <= 1e-2
             R[ix,iy] = 0.0
             Ψ[ix,iy] = 0.0
@@ -169,9 +172,9 @@ function update_Ψ!(Ψ,R,dR,H,dt,dmp_nxy)
             R[ix,iy]  = R[ix,iy]*(1.0-dmp_nxy) + dt*dR[ix,iy]
             Ψ[ix,iy] += dt*R[ix,iy]
         end
-    end
-    if ix == 1 || ix == size(H,1) || iy == 1|| iy == size(H,2)
-        Ψ[ix,iy] == 0.0
+        if ix == 1 || ix == size(H,1) || iy == 1 || iy == size(H,2)
+            Ψ[ix,iy] == 0.0
+        end
     end
     return
 end
@@ -180,7 +183,7 @@ end
     (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,dx,dy,dmp) = problem
     nx,ny = size(Ψ)
     cfl   = 0.2*min(dx,dy)^2
-    dt    = min(dx,dy)/2.1
+    dt = min(dx,dy)/3.1
     dmp_nxy = dmp/min(nx,ny)
     Ψ .= 0; R .= 0; dR .= 0
     @. ∂J_∂H = H - H_obs
@@ -242,13 +245,13 @@ end
     npow         = 3
     β0           = 0.25
     # numerics
-    nx           = 256
+    nx           = 301
     ny           = ceil(Int,nx*ly/lx)
     niter        = 200max(nx,ny)
     ncheck       = 1min(nx,ny)
     ϵtol         = 1e-4
     gd_ϵtol      = 1e-3
-    dmp          = 0.82
+    dmp          = 0.78
     dmp_adj      = 1.7
     gd_niter     = 100
     bt_niter     = 3
@@ -266,8 +269,8 @@ end
     H_ini        = copy(H)
     B            = hatfun1 .+ hatfun2
     ELA          = CuArray(@. 2.0 + 1.0*(xc/lx - 0.5) + 0.0*yc')
-    β_synt       = CuArray(@.     β0 - 0.0 * atan(xc/lx) - 0.015 * atan(yc'/lx))
-    β_ini        = CuArray(@. 0.7*β0 - 0.0 * atan(xc/lx) - 0.050 * atan(yc'/lx))
+    β_synt       = CuArray(@.     β0 - 0.0 * atan(xc/lx) - 0.001 * atan(yc'/lx))
+    β_ini        = CuArray(@. 0.7*β0 - 0.0 * atan(xc/lx) - 0.002 * atan(yc'/lx))
     β            = copy(β_ini)
     β2           = similar(β)
     Jn           = CUDA.zeros(Float64,nx,ny) # cost function gradient
@@ -280,6 +283,7 @@ end
     solve!(fwd_problem)
     println("  gradient descent")
     S_obs = B .+ H_obs; S_obs[H_obs .== 0] .= NaN
+    matwrite("out_visu/run2/static.mat",Dict("beta_synt"=>Array(β_synt),"beta"=>Array(β),"B"=>Array(B),"ELA"=>Array(ELA),"H_obs"=>Array(H_obs)))
     γ = γ0
     J_old = sqrt(cost(H,H_obs)*dx*dy)
     J_ini = J_old
@@ -292,7 +296,7 @@ end
         cost_gradient!(Jn,adj_problem)
         # line search
         for bt_iter = 1:bt_niter
-            @. β = β - γ*Jn
+            @. β = min(β - γ*Jn,100.0)
             β[[1,end],:] .= β[[2,end-1],:]; β[:,[1,end]] .= β[:,[2,end-1]]
             smooth!(β,β2,5)
             β[[1,end],:] .= β[[2,end-1],:]; β[:,[1,end]] .= β[:,[2,end-1]]
@@ -311,12 +315,17 @@ end
         # visu
         push!(iter_evo,gd_iter); push!(J_evo,J_old/J_ini)
         @. S = B + H; S[H .== 0] .= NaN
-        p1 = heatmap(xc,yc,Array(S')    ; title="S"    , aspect_ratio=1)
-        p2 = heatmap(xc,yc,Array(β')    ; title="β"    , aspect_ratio=1)
-        p3 = heatmap(xc,yc,Array(S_obs'); title="S_obs", aspect_ratio=1)
-        p4 = plot(iter_evo,J_evo; title="misfit", label="", yaxis=:log10,linewidth=2)
-        display(plot(p1,p2,p3,p4;layout=(2,2),size=(980,980)))
-        # check convergence
+        if DO_VISU
+            p1 = heatmap(xc,yc,Array(S')    ; title="S"    , aspect_ratio=1)
+            p2 = heatmap(xc,yc,Array(β')    ; title="β"    , aspect_ratio=1)
+            p3 = heatmap(xc,yc,Array(S_obs'); title="S_obs", aspect_ratio=1)
+            p4 = plot(iter_evo,J_evo; title="misfit", label="", yaxis=:log10,linewidth=2)
+            display(plot(p1,p2,p3,p4;layout=(2,2),size=(980,980)))
+        end
+        if DO_SAVE
+            matwrite("out_visu/run2/step_$gd_iter.mat",Dict("beta"=>Array(β),"iter_evo"=>iter_evo,"J_evo"=>J_evo,"H"=>Array(H),"gamma"=>γ,"Psi"=>Array(adj_problem.Ψ),"Jn"=>Array(Jn)))
+        end
+            # check convergence
         if J_old/J_ini < gd_ϵtol
             @printf("  gradient descent converged, misfit = %.1e\n", J_old)
             break

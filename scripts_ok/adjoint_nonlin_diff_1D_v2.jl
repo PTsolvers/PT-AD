@@ -56,7 +56,7 @@ mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
     dx::T; dmp::T
 end
 
-function AdjointProblem(H,H_obs,npow,dx,dmp,niter,ncheck,ϵtol)
+function AdjointProblem(H,H_obs,npow,niter,ncheck,ϵtol,dx,dmp)
     Ψ     = similar(H)
     R     = similar(H)
     dR    = similar(H)
@@ -106,7 +106,7 @@ end
     npows0       = 3.0
     npowi0       = 1.0
     # numerics
-    nx           = 101
+    nx           = 128
     niter        = 100nx
     ncheck       = 5nx
     ϵtol         = 1e-8
@@ -127,12 +127,13 @@ end
     npow_init    = fill(npowi0,nx)
     npow         = copy(npow_init)
     Jn           = zeros(nx) # cost function gradient
-    fwd_problem  = ForwardProblem(H,npow,niter,ncheck,ϵtol,dx,dmp)
-    adj_problem  = AdjointProblem(H,H_obs,npow,dx,dmp_adj,niter,ncheck,ϵtol)
-    synt_problem = ForwardProblem(H_obs,npow_synt,niter,ncheck,ϵtol,dx,dmp)
+    synt_problem = ForwardProblem(H_obs,      npow_synt,niter,ncheck,ϵtol,dx,dmp    )
+    fwd_problem  = ForwardProblem(H    ,      npow     ,niter,ncheck,ϵtol,dx,dmp    )
+    adj_problem  = AdjointProblem(H    ,H_obs,npow     ,niter,ncheck,ϵtol,dx,dmp_adj)
     # action
     println("  generating synthetic data...")
     solve!(synt_problem)
+    println("  done.")
     solve!(fwd_problem)
     println("  gradient descent")
     γ = γ0

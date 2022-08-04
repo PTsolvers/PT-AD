@@ -3,24 +3,11 @@ using Enzyme,Plots,Printf,CUDA,MAT
 const DO_SAVE = false
 const DO_VISU = true
 
-@inline function mypow(a,n::Integer)
-    tmp = a*a
-    if n == 3
-        return tmp*a
-    elseif n == 4
-        return tmp*tmp
-    elseif n == 5
-        return tmp*tmp*a
-    end
-    return NaN
-end
-
-@inline ∇Sx(H,B,dx,ix,iy)         = (B[ix,iy]-B[ix-1,iy])/dx + (H[ix,iy]-H[ix-1,iy])/dx
-@inline ∇Sy(H,B,dy,ix,iy)         = (B[ix,iy]-B[ix,iy-1])/dy + (H[ix,iy]-H[ix,iy-1])/dy
-@inline Dcoef(H,npow)             = 1e-4*mypow(H,(npow+2)) + mypow(H,npow)
-@inline Dcoef(H,npow,ix,iy)       = Dcoef(H[ix,iy],npow)
-@inline H_av(H,ix,iy)             = 0.25*(H[ix-1,iy-1]+H[ix,iy-1]+H[ix-1,iy]+H[ix,iy])
-
+@inline ∇Sx(H,B,dx,ix,iy)   = (B[ix,iy]-B[ix-1,iy])/dx + (H[ix,iy]-H[ix-1,iy])/dx
+@inline ∇Sy(H,B,dy,ix,iy)   = (B[ix,iy]-B[ix,iy-1])/dy + (H[ix,iy]-H[ix,iy-1])/dy
+@inline Dcoef(H,npow)       = 1e-4*H^(npow+2.0) + H^npow
+@inline Dcoef(H,npow,ix,iy) = Dcoef(H[ix,iy],npow)
+@inline H_av(H,ix,iy)       = 0.25*(H[ix-1,iy-1]+H[ix,iy-1]+H[ix-1,iy]+H[ix,iy])
 
 function residual!(R,dτ,H,B,ELA,β,npow,cfl,dx,dy)
     ix = (blockIdx().x-1)*blockDim().x + threadIdx().x
@@ -106,24 +93,22 @@ end
 cost(H,H_obs) = 0.5*sum((H.-H_obs).^2)
 
 mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T}}
-    H::A; B::A; ELA::A; R::A; dR::A; dτ::A; β::A; npow::Int
-    niter::Int; ncheck::Int; ϵtol::T
+    H::A; B::A; ELA::A; R::A; dR::A; dτ::A; β::A; npow::T
+    niter::Int; ncheck::Int; ϵtol::T; nthreads::Tuple{Int64,Int64}; nblocks::Tuple{Int64,Int64}
     dx::T; dy::T; dmp::T
 end
 
-function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dy,dmp)
+function ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp)
     R  = similar(H)
     dR = similar(H)
     dτ = similar(H)
-    return ForwardProblem(H,B,ELA,R,dR,dτ,β,npow,niter,ncheck,ϵtol,dx,dy,dmp)
+    return ForwardProblem(H,B,ELA,R,dR,dτ,β,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp)
 end
 
 @views function solve!(problem::ForwardProblem)
-    (;H,B,ELA,R,dR,dτ,β,npow,niter,ncheck,ϵtol,dx,dy,dmp) = problem
-    nx,ny    = size(H)
-    cfl      = 0.2*min(dx,dy)^2
-    nthreads = (32,16)
-    nblocks  = cld.((nx,ny),nthreads)
+    (;H,B,ELA,R,dR,dτ,β,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp) = problem
+    nx,ny = size(H)
+    cfl = 0.2*min(dx,dy)^2
     R  .= 0; dR .= 0; dτ .= 0
     merr = 2ϵtol; iter = 1
     while merr >= ϵtol && iter < niter
@@ -145,12 +130,12 @@ end
 end
 
 mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
-    Ψ::A; R::A; dR::A; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; dτ::A; npow::Int
-    niter::Int; ncheck::Int; ϵtol::T
+    Ψ::A; R::A; dR::A; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; dτ::A; npow::T
+    niter::Int; ncheck::Int; ϵtol::T; nthreads::Tuple{Int64,Int64}; nblocks::Tuple{Int64,Int64}
     dx::T; dy::T; dmp::T
 end
 
-function AdjointProblem(H,H_obs,B,ELA,β,npow,dx,dy,dmp,niter,ncheck,ϵtol)
+function AdjointProblem(H,H_obs,B,ELA,β,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp)
     Ψ     = similar(H)
     R     = similar(H)
     dR    = similar(H)
@@ -158,7 +143,7 @@ function AdjointProblem(H,H_obs,B,ELA,β,npow,dx,dy,dmp,niter,ncheck,ϵtol)
     tmp1  = similar(H)
     tmp2  = similar(H)
     ∂J_∂H = similar(H)
-    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,dx,dy,dmp)
+    return AdjointProblem(Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp)
 end
 
 function update_Ψ!(Ψ,R,dR,H,dt,dmp_nxy)
@@ -180,16 +165,14 @@ function update_Ψ!(Ψ,R,dR,H,dt,dmp_nxy)
 end
 
 @views function solve!(problem::AdjointProblem)
-    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,dx,dy,dmp) = problem
+    (;Ψ,R,dR,tmp1,tmp2,∂J_∂H,H,H_obs,B,ELA,β,dτ,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp) = problem
     nx,ny = size(Ψ)
-    cfl   = 0.2*min(dx,dy)^2
+    cfl = 0.2*min(dx,dy)^2
     dt = min(dx,dy)/3.1
     dmp_nxy = dmp/min(nx,ny)
     Ψ .= 0; R .= 0; dR .= 0
     @. ∂J_∂H = H - H_obs
     merr = 2ϵtol; iter = 1
-    nthreads = (32,16)
-    nblocks  = cld.((nx,ny),nthreads)
     while merr >= ϵtol && iter < niter
         dR .= .-∂J_∂H; tmp2 .= Ψ
         CUDA.@sync @cuda threads=nthreads blocks=nblocks grad_residual_H!(dR,H,B,ELA,β,dτ,npow,cfl,tmp1,tmp2,dx,dy)
@@ -209,12 +192,9 @@ end
 end
 
 function cost_gradient!(Jn,problem::AdjointProblem)
-    (;Ψ,tmp1,tmp2,H,B,ELA,β,dτ,npow,dx,dy) = problem
-    nx,ny   = size(H)
-    cfl     = 0.2*min(dx,dy)^2
+    (;Ψ,tmp1,tmp2,H,B,ELA,β,dτ,npow,nthreads,nblocks,dx,dy) = problem
+    cfl = 0.2*min(dx,dy)^2
     tmp1 .= .-Ψ; Jn .= 0.0
-    nthreads = (32,16)
-    nblocks  = ceil.(Int,(nx,ny)./nthreads)
     CUDA.@sync @cuda threads=nthreads blocks=nblocks grad_residual_β!(Jn,H,B,ELA,β,dτ,npow,cfl,tmp1,tmp2,dx,dy)
     Jn[[1,end],:] .= Jn[[2,end-1],:]; Jn[:,[1,end]] .= Jn[:,[2,end-1]]
     return
@@ -229,9 +209,7 @@ function laplacian!(A2,A)
     return
 end
 
-function smooth!(A,A2,nsm)
-    nthreads = (32,32)
-    nblocks  = cld.(size(A),nthreads)
+function smooth!(A,A2,nsm,nthreads,nblocks)
     for _ = 1:nsm
         CUDA.@sync @cuda threads=nthreads blocks=nblocks laplacian!(A2,A)
         A,A2 = A2,A
@@ -242,11 +220,13 @@ end
 @views function main()
     # physics
     lx,ly        = 100.0,100.0
-    npow         = 3
+    npow         = 3.0
     β0           = 0.25
     # numerics
-    nx           = 301
+    nx           = 320
     ny           = ceil(Int,nx*ly/lx)
+    nthreads     = (16,16)
+    nblocks      = cld.((nx,ny),nthreads)
     niter        = 200max(nx,ny)
     ncheck       = 1min(nx,ny)
     ϵtol         = 1e-4
@@ -274,12 +254,13 @@ end
     β            = copy(β_ini)
     β2           = similar(β)
     Jn           = CUDA.zeros(Float64,nx,ny) # cost function gradient
-    fwd_problem  = ForwardProblem(H,B,ELA,β,npow,niter,ncheck,ϵtol,dx,dy,dmp)
-    adj_problem  = AdjointProblem(H,H_obs,B,ELA,β,npow,dx,dy,dmp_adj,niter,ncheck,ϵtol)
-    synt_problem = ForwardProblem(H_obs,B,ELA,β_synt,npow,niter,ncheck,ϵtol,dx,dy,dmp)
+    synt_problem = ForwardProblem(H_obs  ,B,ELA,β_synt,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp    )
+    fwd_problem  = ForwardProblem(H      ,B,ELA,β     ,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp    )
+    adj_problem  = AdjointProblem(H,H_obs,B,ELA,β     ,npow,niter,ncheck,ϵtol,nthreads,nblocks,dx,dy,dmp_adj)
     # action
-    println("  generating synthetic data...")
+    println("  generating synthetic data (nx=$nx, ny=$ny)...")
     solve!(synt_problem)
+    println("  done.")
     solve!(fwd_problem)
     println("  gradient descent")
     S_obs = B .+ H_obs; S_obs[H_obs .== 0] .= NaN
@@ -298,7 +279,7 @@ end
         for bt_iter = 1:bt_niter
             @. β = min(β - γ*Jn,100.0)
             β[[1,end],:] .= β[[2,end-1],:]; β[:,[1,end]] .= β[:,[2,end-1]]
-            smooth!(β,β2,5)
+            smooth!(β,β2,5,nthreads,nblocks)
             β[[1,end],:] .= β[[2,end-1],:]; β[:,[1,end]] .= β[:,[2,end-1]]
             fwd_problem.H .= H_ini
             solve!(fwd_problem)

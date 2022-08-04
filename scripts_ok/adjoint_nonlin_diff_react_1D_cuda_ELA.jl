@@ -1,49 +1,36 @@
 using Enzyme,Plots,Printf,LoopVectorization
 using CUDA
 
-@inline function mypow(a,n::Int)
-    tmp=a*a
-    if n==1 a
-    elseif n==2 tmp
-    elseif n==3 tmp*a
-    elseif n==4 tmp*tmp
-    elseif n==5 tmp*tmp*a
-    elseif n==6 tmp*tmp*tmp
-    else NaN
-    end
-end
-
-@inbounds function residual!(R,H,B,ELA,β,npow::Int,dx)
+@inbounds function residual!(R,H,B,ELA,β,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(R)-1
         ∇S_l  = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r  = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
         H_l   = (H[ix  ]+H[ix-1])*0.5
         H_r   = (H[ix+1]+H[ix  ])*0.5
-        D_l   = (mypow(H_l,npow+2)*1e-4 + mypow(H_l,npow)) * mypow(∇S_l,2)
-        D_r   = (mypow(H_r,npow+2)*1e-4 + mypow(H_r,npow)) * mypow(∇S_r,2)
+        D_l   = (H_l^(npow+2)*1e-4 + H_l^npow) * ∇S_l^2
+        D_r   = (H_r^(npow+2)*1e-4 + H_r^npow) * ∇S_r^2
         R[ix] = (D_r*∇S_r - D_l*∇S_l)/dx + min(β[ix]*(B[ix] + H[ix] - ELA[ix]),0.01)
     end
     return
 end
 
-@inbounds function timestep!(dτ,H,B,npow::Int,dτfac,dx)
+@inbounds function timestep!(dτ,H,B,npow,dτfac,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(H)-1
         ∇S_l   = (B[ix  ]-B[ix-1])/dx + (H[ix  ]-H[ix-1])/dx
         ∇S_r   = (B[ix+1]-B[ix  ])/dx + (H[ix+1]-H[ix  ])/dx
         H_l    = (H[ix  ]+H[ix-1])*0.5
         H_r    = (H[ix+1]+H[ix  ])*0.5
-        D_l    = (mypow(H_l,npow+2)*1e-4 + mypow(H_l,npow)) * mypow(∇S_l,2)
-        D_r    = (mypow(H_r,npow+2)*1e-4 + mypow(H_r,npow)) * mypow(∇S_r,2)
+        D_l    = (H_l^(npow+2)*1e-4 + H_l^npow) * ∇S_l^2
+        D_r    = (H_r^(npow+2)*1e-4 + H_r^npow) * ∇S_r^2
         dτ[ix] = dτfac*min(0.1, 0.2*dx^2/(1e-3 + 0.5*(D_l + D_r)))
-
     end
     return
 end
 
 mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T}}
-    H::A; B::A; ELA::A; R::A; dR::A; β::A; npow::Int
+    H::A; B::A; ELA::A; R::A; dR::A; β::A; npow::T
     Err::A; dτ::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
     dx::T; dmp::T; dτfac::T
 end
@@ -82,7 +69,7 @@ end
 end
 
 mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T}}
-    Ψ::A; R::A; dR; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; npow::Int
+    Ψ::A; R::A; dR; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; B::A; ELA::A; β::A; npow::T
     Err::A; niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
     dx::T; dmp::T; dτfac::T
 end
@@ -177,10 +164,10 @@ end
 @views function main()
     # physics
     lx           = 100.0
-    npow         = 3
+    npow         = 3.0
     β0           = 0.1
     # numerics
-    nx           = 64*16#*16*2
+    nx           = 64*8#*16*2
     threads      = 512
     blocks       = cld(nx,threads)
     niter        = 1000nx
@@ -192,7 +179,7 @@ end
     dτfac        = 0.5 # 1024->0.7, 2048->0.4
     gd_niter     = 100
     bt_niter     = 10
-    γ0           = 2e-1
+    γ0           = 5e-1
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
@@ -219,8 +206,6 @@ end
     println("  generating synthetic data (nx=$nx) ...")
     solve!(synt_problem)
     ∫A_synt = sum(min.(β.*(B.+H_obs.-ELA_synt),0.01))
-    # A_synt = min.(β.*(B.+H_obs.-ELA_synt),0.01)
-    # display(plot(xc,Array(A_synt)));error("stop")
     println("  done.")
     solve!(fwd_problem)
     println("  gradient descent")

@@ -174,7 +174,7 @@ end
     npow         = 3
     β0           = 0.5
     # numerics
-    nx           = 64*16
+    nx           = 64*4#*16*2
     threads      = 512
     blocks       = cld(nx,threads)
     niter        = 1000nx
@@ -183,10 +183,10 @@ end
     gd_ϵtol      = 1e-3
     dmp          = 1.0
     dmp_adj      = 1.5
-    dτfac        = 0.7
+    dτfac        = 0.9 # 1024->0.7, 2048->0.4
     gd_niter     = 100
     bt_niter     = 10
-    γ0           = 5.0e-1
+    γ0           = 1e1
     # preprocessing
     dx           = lx/nx
     xc           = LinRange(dx/2,lx-dx/2,nx)
@@ -200,8 +200,11 @@ end
     H_ini        = copy(H)
     B            = CuArray( 1.0 .* exp.(.-(xc./lx .- 0.5).^2 ./ 0.25) .+ 2.5 .* exp.(.-(xc./lx .-0.5).^2 ./ 0.025) )
     ELA          = CuArray( collect(2.0 .+ 0.5.*(xc./lx .- 0.5)) )
-    β_synt       = CuArray( collect(β0 .- 0.015 .* atan.(xc./lx)) )
-    β_ini        = 0.5 .* β_synt
+    # β_synt       = CuArray( collect(β0 .- 0.04 .* atan.(xc./lx .- 0.5)) )
+    # β_ini        = CuArray( collect(β0 .+ 0.003 .* atan.(xc./lx .- 0.5)) )
+    β_synt       = CuArray( clamp.(β0 .+ 0.04 .* (1.0 .- 2.0 .* 10.0 .* abs.((2.0 .* xc/lx .- 1.0)./10.0)), 0.495, 0.51) )
+    β_ini        = CuArray( clamp.(β0 .+ 0.005 .* (1.0 .- 2.0 .* 10.0 .* abs.((2.0 .* xc/lx .- 1.0)./10.0)), 0.495, 0.51) )
+    # display(plot(xc,[β_synt,β_ini])); error("stop")
     β            = copy(β_ini)
     Jn           = CUDA.zeros(Float64,nx) # cost function gradient
     J2           = CUDA.zeros(Float64,nx) # tmp storage
@@ -245,7 +248,7 @@ end
         # visu
         push!(iter_evo,gd_iter); push!(J_evo,J_old/J_ini)
         @. S = B + H; S[H .== 0] .= NaN
-        @. βv = β; βv[H .== 0] .= NaN
+        @. βv = β; #βv[H .== 0] .= NaN
         p1 = plot(xc,[Array(B),Array(S),Array(S_obs)]; title="S"     , label=["B" "S" "S_obs"]      , ylim=(0,Inf), aspect_ratio=2, line = (2, [:solid :solid :dash]))
         p2 = plot(xc,[Array(βv),Array(β_synt)]       ; title="β"     , label=["current" "synthetic"], linewidth=2)
         p3 = plot(xc,Array(ELA)                      ; title="ELA"   , label=""                     , linewidth=2)

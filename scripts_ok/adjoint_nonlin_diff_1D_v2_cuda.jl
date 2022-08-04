@@ -1,23 +1,10 @@
 using Enzyme,Plots,Printf,LoopVectorization
 using CUDA
 
-function mypow(a,n::Int)
-    tmp=a*a
-    if n==1 a
-    elseif n==2 tmp
-    elseif n==3 tmp*a
-    elseif n==4 tmp*tmp
-    elseif n==5 tmp*tmp*a
-    elseif n==6 tmp*tmp*tmp
-    else NaN
-    end
-end
-
 @inbounds function residual!(R,H,npow,dx)
     ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
     if ix>=2 && ix<=length(R)-1
-        # R[ix] = (mypow(H[ix-1],(npow[ix-1]+1)) - 2.0*mypow(H[ix],(npow[ix]+1)) + mypow(H[ix+1],(npow[ix+1]+1)))/dx/dx/(npow[ix]+1)
-        R[ix] = (H[ix-1]^(npow[ix-1]+1) - 2.0*H[ix]^(npow[ix]+1) + H[ix+1]^(npow[ix+1]+1))/dx/dx/(npow[ix]+1)
+        R[ix] = (H[ix-1]^(npow[ix-1]+1.0) - 2.0*H[ix]^(npow[ix]+1.0) + H[ix+1]^(npow[ix+1]+1.0))/dx/dx/(npow[ix]+1.0)
     end
     return
 end
@@ -30,8 +17,8 @@ function cost(H,H_obs)
     return 0.5*J
 end
 
-mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T},B<:AbstractArray{<:Integer}}
-    H::A; R::A; dR::A; npow::B
+mutable struct ForwardProblem{T<:Real,A<:AbstractArray{T}}
+    H::A; R::A; dR::A; npow::A
     niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
     dx::T; dmp::T
 end
@@ -65,8 +52,8 @@ function solve!(problem::ForwardProblem)
     return
 end
 
-mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T},B<:AbstractArray{<:Integer}}
-    Ψ::A; R::A; dR; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; npow::B
+mutable struct AdjointProblem{T<:Real,A<:AbstractArray{T},}
+    Ψ::A; R::A; dR; tmp1::A; tmp2::A; ∂J_∂H::A; H::A; H_obs::A; npow::A
     niter::Int; ncheck::Int; ϵtol::T; threads::Int; blocks::Int
     dx::T; dmp::T
 end
@@ -121,15 +108,15 @@ function cost_gradient!(Jn,problem::AdjointProblem)
     (;Ψ,tmp1,tmp2,H,npow,threads,blocks,dx) = problem
     tmp1 .= .-Ψ; Jn .= 0.0
     @cuda blocks=blocks threads=threads cost_grad!(tmp1,tmp2,H,Jn,npow,dx); synchronize()
-    # Jn[1:1] .= Jn[2:2]; Jn[end:end] .= Jn[end-1:end-1]
+    Jn[1:1] .= Jn[2:2]; Jn[end:end] .= Jn[end-1:end-1]
     return
 end
 
 @views function main()
     # physics
     lx           = 20.0
-    npows0       = 3
-    npowi0       = 1
+    npows0       = 3.0
+    npowi0       = 1.0
     # numerics
     nx           = 128
     threads      = 128
@@ -153,7 +140,7 @@ end
     npow_synt    = CUDA.fill(npows0,nx)
     npow_init    = CUDA.fill(npowi0,nx)
     npow         = copy(npow_init)
-    Jn           = CUDA.zeros(Float64,nx) # cost function gradient
+    Jn           = CUDA.zeros(eltype(npow),nx) # cost function gradient
     synt_problem = ForwardProblem(H_obs,      npow_synt,niter,ncheck,ϵtol,threads,blocks,dx,dmp    )
     fwd_problem  = ForwardProblem(H    ,      npow     ,niter,ncheck,ϵtol,threads,blocks,dx,dmp    )
     adj_problem  = AdjointProblem(H    ,H_obs,npow     ,niter,ncheck,ϵtol,threads,blocks,dx,dmp_adj)
@@ -172,34 +159,33 @@ end
         solve!(adj_problem)
         # compute cost function gradient
         cost_gradient!(Jn,adj_problem)
-        error("stop")
-        # # line search
-        # for bt_iter = 1:bt_niter
-        #     @. npow -= γ*Jn
-        #     fwd_problem.H .= H_ini
-        #     solve!(fwd_problem)
-        #     J_new = cost(Array(H),Array(H_obs)) # CPU function for now
-        #     if J_new < J_old
-        #         γ *= 1.2
-        #         J_old = J_new
-        #         break
-        #     else
-        #         npow .= npow_init
-        #         γ *= 0.5
-        #     end
-        # end
-        # push!(iter_evo,gd_iter); push!(J_evo,J_old)
-        # if J_old < gd_ϵtol
-        #     @printf("  gradient descent converged, misfit = %.1e\n", J_old)
-        #     break
-        # else
-        #     @printf("  #iter = %d, misfit = %.1e\n", gd_iter, J_old)
-        # end
-        # # visu
-        # p1 = plot(xc,[H,H_obs]       ; title="H"     , label=["H" "H_obs"])
-        # p2 = plot(iter_evo,J_evo     ; title="misfit", label="", yaxis=:log10)
-        # p3 = plot(xc,[npow,npow_synt]; title="n"      , label=["current" "synthetic"])
-        # display(plot(p1,p2,p3;layout=(1,3)))
+        # line search
+        for bt_iter = 1:bt_niter
+            @. npow -= γ*Jn
+            fwd_problem.H .= H_ini
+            solve!(fwd_problem)
+            J_new = cost(Array(H),Array(H_obs)) # CPU function for now
+            if J_new < J_old
+                γ *= 1.2
+                J_old = J_new
+                break
+            else
+                npow .= npow_init
+                γ *= 0.5
+            end
+        end
+        push!(iter_evo,gd_iter); push!(J_evo,J_old)
+        if J_old < gd_ϵtol
+            @printf("  gradient descent converged, misfit = %.1e\n", J_old)
+            break
+        else
+            @printf("  #iter = %d, misfit = %.1e\n", gd_iter, J_old)
+        end
+        # visu
+        p1 = plot(xc,[Array(H),Array(H_obs)]       ; title="H"     , label=["H" "H_obs"])
+        p2 = plot(iter_evo,J_evo                   ; title="misfit", label="", yaxis=:log10)
+        p3 = plot(xc,[Array(npow),Array(npow_synt)]; title="n"     , label=["current" "synthetic"])
+        display(plot(p1,p2,p3;layout=(1,3)))
     end
     return
 end

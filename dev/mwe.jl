@@ -10,19 +10,22 @@ using CUDA
 end
 
 function compute!(R,dR,H,dH,N)
-    Enzyme.autodiff_deferred(my_fun!,Const,Duplicated(R,dR),Duplicated(H,dH),Const(N))
+    # Enzyme.autodiff_deferred(my_fun!,Const,Duplicated(R,dR),Duplicated(H,dH),Const(N))
+    Enzyme.autodiff_deferred(my_fun!,Const,Duplicated(R,dR),Const(H),Duplicated(N,dH))
     return
 end
 
 function mwe()
-    R  = CUDA.rand(10)
-    dR = CUDA.zeros(10)
-    H  = CUDA.rand(10)
-    dH = CUDA.zeros(10)
-    N  = CUDA.rand(10)
+    R  =  CUDA.rand(Float64,10)
+    H  =  CUDA.rand(Float64,10)
+    N  =  CUDA.rand(Float64,10)
+    dR = CUDA.zeros(Float64,10)
+    dH = CUDA.zeros(Float64,10)
     threads = 10
 
     @cuda threads=threads compute!(R,dR,H,dH,N); synchronize()
+
+    @show R
 
     return
 end

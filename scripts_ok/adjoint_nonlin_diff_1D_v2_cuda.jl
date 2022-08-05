@@ -153,7 +153,7 @@ end
     γ = γ0
     J_old = cost(Array(H),Array(H_obs)) # CPU function for now
     J_evo = Float64[]; iter_evo = Int[]
-    for gd_iter = 1:gd_niter
+    @gif for gd_iter = 1:gd_niter
         npow_init .= npow
         # adjoint solve
         solve!(adj_problem)

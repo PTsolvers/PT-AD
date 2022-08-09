@@ -16,19 +16,28 @@ We tested our workflow in a 1D configuration in which we try to invert for the p
 
 ![Inverting for power-law exponent in 1D](/docs/npow_inverse1D.gif)
 
+> code: [`adjoint_nonlin_diff_1D_v2.jl`](/scripts_ok/adjoint_nonlin_diff_1D_v2.jl), [`adjoint_nonlin_diff_1D_v2_cuda.jl`](/scripts_ok/adjoint_nonlin_diff_1D_v2_cuda.jl)
+
 ### Shallow-Ice
 We tested our approach to invert for the equilibrium line (ELA) or the "mass-balance gradient" in an ice-flow model as described by [Visnjevic et al. 2018](http://www.doi.org/10.1017/jog.2018.82), both in 1D and 2D. For testing purpose, we use a slightly more synthetic configuration:
 
 ![Inverting forMB gradient in 2D](/docs/inverse_2D_sia.gif)
+
+> code: [`adjoint_nonlin_diff_react_2D_cuda.jl`](/scripts_ok/adjoint_nonlin_diff_react_2D_cuda.jl)
+
+#### 1D inversion for ELA
+The ELA inversion code is available only in 1D and was used to prototype the 2D SIA inversion.
+
+> code: [`adjoint_nonlin_diff_react_1D_cuda_ELA.jl`](/scripts_ok/adjoint_nonlin_diff_react_1D_cuda_ELA.jl)
 
 ## Note on performance
 
 ### Effective memory throughput
 Performance-wise, we compared the efficiency (measuring the effective memory throughput $T_\mathrm{eff}$ in GB/s) of the forward and adjoint solver. In addition, we also report the time per iteration as function of numerical grid resolution for both solvers.
 
-![Inverting forMB gradient in 2D](/docs/Teff_timeit.png)
+![Effective memory throughput](/docs/Teff_timeit.png)
 
 ### Time per iteration
 In addition, we also "naively" compared the execution time per forward solve iteration in seconds when executing both on the GPU and on the CPU. There we see about 2 orders of magnitude speed-up.
 
-![Inverting forMB gradient in 2D](/docs/timeit_gpu_cpu.png)
+![CPU vs GPU timing](/docs/timeit_gpu_cpu.png)

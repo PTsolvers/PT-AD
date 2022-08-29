@@ -8,7 +8,7 @@ As proof of concept, we successfully used AD to:
 1. retrieve the residual of the Adjoint variable we can then use in the Pseudo-Transient solving procedure in order to solve for the Adjoint problem, and to;
 2. retrieve the gradient of the cost-function with respect to the parameter we are inverting/optimising for.
 
-> :warning: _**Note:** currently, master branch of Enzyme is needed `] add Enzyme#master` to successfully execute the presented scripts._
+> :warning: _**Note:** currently, the master branch of Enzyme.jl is needed to successfully execute the presented scripts. Consider `] add Enzyme#master` within Julia's pkg manager._
 
 ## Benchmarks
 The benchmark codes are available in the [**scripts_ok**](/scripts_ok/) folder and execute on Nvidia GPUs if `cuda` is appended in their name, and on the CPU otherwise. The `adjoint_nonlin_diff_1D_v2.jl` script provides a direct comparison between the CPU and GPU implementation.

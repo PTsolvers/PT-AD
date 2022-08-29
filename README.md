@@ -2,11 +2,13 @@
 
 The aim of this repository is to combine solvers using the [Pseudo-Transient Method](https://doi.org/10.5194/gmd-15-5757-2022) with Automatic Differentiation (AD) tools, here [Enzyme.jl](https://enzyme.mit.edu/julia/), on GPUs in order to retrieve necessary objects to perform inversions or parameter optimisation. 
 
- See our [JuliaCon22 talk](https://youtu.be/K2VtJe9baO4) for details.
+:bulb: See our [JuliaCon22 talk](https://youtu.be/K2VtJe9baO4) for details.
 
 As proof of concept, we successfully used AD to:
 1. retrieve the residual of the Adjoint variable we can then use in the Pseudo-Transient solving procedure in order to solve for the Adjoint problem, and to;
 2. retrieve the gradient of the cost-function with respect to the parameter we are inverting/optimising for.
+
+> :warning: _**Note:** currently, master branch of Enzyme is needed `] add Enzyme#master` to successfully execute the presented scripts._
 
 ## Benchmarks
 The benchmark codes are available in the [**scripts_ok**](/scripts_ok/) folder and execute on Nvidia GPUs if `cuda` is appended in their name, and on the CPU otherwise. The `adjoint_nonlin_diff_1D_v2.jl` script provides a direct comparison between the CPU and GPU implementation.

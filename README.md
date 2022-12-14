@@ -43,3 +43,9 @@ Performance-wise, we compared the efficiency (measuring the effective memory thr
 In addition, we also "naively" compared the execution time per forward solve iteration in seconds when executing both on the GPU and on the CPU. There we see about 2 orders of magnitude speed-up.
 
 ![CPU vs GPU timing](/docs/timeit_gpu_cpu.png)
+
+## References
+Giles, M. B., & Pierce, N. A. (2000). An Introduction to the Adjoint Approach to Design. Flow, Turbulence and Combustion, 65(3/4), 393–415. https://doi.org/10.1023/A:1011430410075
+
+Reuber, G. S. (2021). Statistical and deterministic inverse methods in the geosciences: Introduction, review, and application to the nonlinear diffusion equation. GEM - International Journal on Geomathematics, 12(1), 19. https://doi.org/10.1007/s13137-021-00186-y
+
